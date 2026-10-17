@@ -34,6 +34,9 @@ export const SearchInput = ({ name, orgId }: SearchInputProps) => {
   );
   const [peoplePreview, setPeoplePreview] = useState<UserSearchResult[]>([]);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  // Query whose preview has finished loading, so an empty result still
+  // opens the panel and shows "No matches found".
+  const [previewQuery, setPreviewQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
 
   const searchRef = useRef<HTMLDivElement>(null);
@@ -79,6 +82,7 @@ export const SearchInput = ({ name, orgId }: SearchInputProps) => {
     setMessagePreview([]);
     setPeoplePreview([]);
     setIsLoadingPreview(false);
+    setPreviewQuery("");
     previewRequestRef.current += 1;
   }, [pathname]);
 
@@ -123,6 +127,7 @@ export const SearchInput = ({ name, orgId }: SearchInputProps) => {
       setMessagePreview([]);
       setPeoplePreview([]);
       setIsLoadingPreview(false);
+      setPreviewQuery("");
       return;
     }
 
@@ -148,6 +153,7 @@ export const SearchInput = ({ name, orgId }: SearchInputProps) => {
 
         setMessagePreview(messages.slice(0, PREVIEW_LIMIT));
         setPeoplePreview(people.slice(0, PREVIEW_LIMIT));
+        setPreviewQuery(trimmedQuery);
         setActiveIndex(-1);
       } catch (error) {
         if (requestId !== previewRequestRef.current) return;
@@ -254,7 +260,9 @@ export const SearchInput = ({ name, orgId }: SearchInputProps) => {
   const showPreviewPanel =
     isOpen &&
     searchQuery.trim().length >= MIN_QUERY_LENGTH &&
-    (isLoadingPreview || previewItems.length > 0);
+    (isLoadingPreview ||
+      previewItems.length > 0 ||
+      previewQuery === searchQuery.trim());
 
   const showRecentPanel =
     isOpen &&
