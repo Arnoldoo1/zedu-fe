@@ -22,9 +22,6 @@ export const metadata: Metadata = {
     "education collaboration platform",
     "Zedu schools",
   ],
-  icons: {
-    icon: "/TelexIcon.svg",
-  },
   openGraph: {
     title: "Zedu for Schools - Structured Communication for Classrooms",
     description:

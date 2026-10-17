@@ -22,9 +22,6 @@ export const metadata: Metadata = {
     "department communication software",
     "Zedu universities",
   ],
-  icons: {
-    icon: "/TelexIcon.svg",
-  },
   openGraph: {
     title: "Zedu for Universities - Structured Communication at Scale",
     description:

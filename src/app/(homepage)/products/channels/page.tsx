@@ -26,9 +26,6 @@ export const metadata: Metadata = {
     "university discussion channels",
     "bootcamp class communication",
   ],
-  icons: {
-    icon: "/TelexIcon.svg",
-  },
   openGraph: {
     title: "Zedu Channels - Organized Communication for Learning Teams",
     description:

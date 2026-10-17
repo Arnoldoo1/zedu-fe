@@ -258,6 +258,9 @@ const Message = ({
             </span>
 
             <span className="text-xs text-[#98A2B3] mt-[1px]">
+              {new Date(item?.created_at).toLocaleDateString([], {
+                weekday: "short",
+              })}{" "}
               {new Date(item?.created_at).toLocaleTimeString([], {
                 hour: "numeric",
                 minute: "2-digit",
