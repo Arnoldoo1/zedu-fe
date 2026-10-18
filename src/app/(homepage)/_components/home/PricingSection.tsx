@@ -11,39 +11,40 @@ type PricingSectionProps = {
 };
 
 export const PricingSection = ({
-  showSubtitle = false,
+  showSubtitle = true,
 }: PricingSectionProps) => {
   const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">(
-    "yearly"
+    "monthly"
   );
   const plans = pricingCardsByCycle[billingCycle];
 
   return (
-    <section className="relative isolate flex w-full flex-col items-center gap-6 overflow-hidden px-4 py-12 text-center sm:gap-6 sm:px-8 sm:py-16  lg:gap-8 lg:px-12">
+    <section className="relative isolate flex w-full flex-col items-center gap-6 overflow-hidden px-4 py-12 text-center sm:gap-6 sm:px-8 sm:py-16 lg:gap-8 lg:px-12">
       <div
         className={`flex flex-col items-center ${
-          showSubtitle ? "gap-6" : "gap-3"
+          showSubtitle ? "gap-4 sm:gap-6" : "gap-3"
         }`}
       >
-        <h1 className=" text-2xl font-semibold leading-tight text-neutral-900 sm:text-3xl md:text-4xl text-center">
+        <h1 className="text-2xl font-bold leading-tight text-neutral-900 sm:text-3xl md:text-4xl text-center">
           Simple, Flexible Pricing for Education
         </h1>
         {showSubtitle ? (
-          <p className="max-w-3xl text-sm text-neutral-700 sm:text-base">
+          <p className="max-w-2xl text-sm text-neutral-600 sm:text-base">
             Flexible plans for educators, bootcamps, and institutions building
             structured learning environments with collaboration and AI support.
           </p>
         ) : null}
 
-        {/* <div className="inline-flex items-center rounded-full bg-neutral-100 p-1">
+        {/* Interactive Billing Toggle */}
+        <div className="mt-2 inline-flex items-center rounded-full bg-neutral-100 p-1.5 shadow-inner">
           <button
             type="button"
             onClick={() => setBillingCycle("monthly")}
             aria-pressed={billingCycle === "monthly"}
-            className={`rounded-full px-4 py-1.5 text-sm transition-colors ${
+            className={`rounded-full px-5 py-2 text-sm font-medium transition-all duration-200 ${
               billingCycle === "monthly"
-                ? "bg-white text-neutral-900"
-                : "text-neutral-600"
+                ? "bg-white text-neutral-900 shadow-sm"
+                : "text-neutral-500 hover:text-neutral-800"
             }`}
           >
             Monthly
@@ -52,46 +53,50 @@ export const PricingSection = ({
             type="button"
             onClick={() => setBillingCycle("yearly")}
             aria-pressed={billingCycle === "yearly"}
-            className={`rounded-full px-4 py-1.5 text-sm transition-colors ${
+            className={`flex items-center rounded-full px-5 py-2 text-sm font-medium transition-all duration-200 ${
               billingCycle === "yearly"
-                ? "bg-white text-neutral-900"
-                : "text-neutral-600"
+                ? "bg-white text-neutral-900 shadow-sm"
+                : "text-neutral-500 hover:text-neutral-800"
             }`}
           >
             <span>Yearly</span>
-            <span className="ml-1 text-xs text-primary-500">SAVE 16.6%</span>
           </button>
-        </div> */}
+        </div>
       </div>
 
-      {/* cards */}
-      <div className="grid w-full max-w-7xl grid-cols-1 mt-6 place-items-center gap-8 sm:grid-cols-2 sm:gap-5 lg:grid-cols-3 lg:gap-6">
+      {/* Pricing Cards Grid */}
+      <div className="grid w-full max-w-7xl grid-cols-1 mt-6 place-items-stretch justify-center gap-8 sm:grid-cols-2 sm:gap-6 lg:grid-cols-3 lg:gap-8">
         {plans.map((plan) => (
-          <PricingCard
-            key={plan.key}
-            title={plan.title}
-            description={plan.description}
-            amount={plan.amount}
-            periodLabel={plan.periodLabel}
-            footnote={plan.footnote}
-            features={plan.features}
-            ctaText={plan.ctaText}
-            ctaHref={plan.ctaHref}
-            ctaVariant={plan.ctaVariant}
-            variant={plan.variant}
-            badgeText={plan.badgeText}
-          />
+          <div key={plan.key} className="flex justify-center">
+            <PricingCard
+              title={plan.title}
+              description={plan.description}
+              amount={plan.amount}
+              periodLabel={plan.periodLabel}
+              footnote={plan.footnote}
+              features={plan.features}
+              ctaText={plan.ctaText}
+              ctaHref={plan.ctaHref}
+              ctaVariant={plan.ctaVariant}
+              variant={plan.variant}
+              badgeText={plan.badgeText}
+            />
+          </div>
         ))}
       </div>
-      <h1 className="text-xs sm:text-sm md:text-md font-medium text-neutral-700 ">
-        Launching a bootcamp? Let's build a pricing model that fits your cohort
-        size.
-      </h1>
+      <p className="max-w-2xl text-xs text-neutral-600 sm:text-sm">
+        Prices are in Nigerian naira (₦) and billed monthly for each workspace.
+        US dollar amounts are approximate and change with the exchange rate.
+      </p>
+      <p className="mt-4 text-xs sm:text-sm font-medium text-neutral-600">
+        Launching a bootcamp? Let&apos;s build a custom model that fits your
+        cohort size.
+      </p>
       <Link
-        href={"client/settings/organisation/billing/all-plans"}
-        className="group flex items-center gap-2 font-semibold text-primary-500"
+        href={"/client/settings/organisation/billing/all-plans"}
+        className="group flex items-center gap-2 font-semibold text-primary-500 hover:underline"
       >
-        Compare different plans
+        Compare all plans and features
         <span className="inline-flex transition-transform duration-300 ease-out group-hover:translate-x-1">
           <PurpleArrowRight />
         </span>

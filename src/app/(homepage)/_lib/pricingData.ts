@@ -1,8 +1,8 @@
-type BillingCycle = "monthly" | "yearly";
-type CtaVariant = "outline" | "filled";
-type PricingVariant = "starter" | "popular" | "enterprise";
+export type BillingCycle = "monthly" | "yearly";
+export type CtaVariant = "outline" | "filled";
+export type PricingVariant = "starter" | "popular" | "enterprise";
 
-type PricingFeature = {
+export type PricingFeature = {
   text: string;
   enabled: boolean;
 };
@@ -22,14 +22,14 @@ export type PricingCardData = {
   badgeText?: string;
 };
 
-const staticPricingCards: PricingCardData[] = [
+const monthlyCards: PricingCardData[] = [
   {
     key: "starter",
     title: "Starter",
     description: "Best for small classes and educators starting with Zedu.",
     amount: "₦0",
     periodLabel: "/month",
-    footnote: "No credit card needed",
+    footnote: "Per workspace · No credit card needed",
     features: [
       { text: "Up to 3 cohorts", enabled: true },
       { text: "Up to 100 members in total", enabled: true },
@@ -49,9 +49,9 @@ const staticPricingCards: PricingCardData[] = [
     key: "pro",
     title: "Pro",
     description: "Best for bootcamps and structured programs.",
-    amount: "₦20K",
+    amount: "₦20,000",
     periodLabel: "/month",
-    footnote: "",
+    footnote: "Per workspace · about $13 USD",
     features: [
       { text: "Everything in Starter, and", enabled: true },
       { text: "Unlimited cohorts", enabled: true },
@@ -71,9 +71,10 @@ const staticPricingCards: PricingCardData[] = [
   {
     key: "enterprise",
     title: "Enterprise",
-    description:
-      "Flexible pricing for Universities, large programs, and institutions.",
+    description: "Flexible pricing for universities and institutions.",
     amount: "Let's Talk",
+    periodLabel: "",
+    footnote: "Custom billing",
     features: [
       { text: "Everything in Pro, and", enabled: true },
       { text: "Custom student limits per cohort", enabled: true },
@@ -82,8 +83,7 @@ const staticPricingCards: PricingCardData[] = [
       { text: "Institution-level workspace control", enabled: true },
       { text: "Security and compliance tools", enabled: true },
       { text: "Custom integrations", enabled: true },
-      { text: "Dedicated onboarding", enabled: true },
-      { text: "Priority support", enabled: true },
+      { text: "Dedicated onboarding & priority support", enabled: true },
     ],
     ctaText: "Contact Sales",
     ctaHref: "/contact-sales",
@@ -92,7 +92,28 @@ const staticPricingCards: PricingCardData[] = [
   },
 ];
 
+const yearlyCards: PricingCardData[] = [
+  {
+    ...monthlyCards[0],
+    features: [...monthlyCards[0].features],
+  },
+  {
+    ...monthlyCards[1],
+    amount: "Contact Sales",
+    periodLabel: "",
+    footnote: "Annual billing available on request",
+    ctaText: "Contact Sales",
+    ctaHref: "/contact-sales",
+    ctaVariant: "outline",
+    features: [...monthlyCards[1].features],
+  },
+  {
+    ...monthlyCards[2],
+    features: [...monthlyCards[2].features],
+  },
+];
+
 export const pricingCardsByCycle: Record<BillingCycle, PricingCardData[]> = {
-  monthly: staticPricingCards,
-  yearly: staticPricingCards,
+  monthly: monthlyCards,
+  yearly: yearlyCards,
 };
