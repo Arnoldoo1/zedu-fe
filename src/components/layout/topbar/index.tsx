@@ -144,6 +144,23 @@ const Topbar = () => {
       {/* Leftmost section: Workspace button */}
 
       <div className="flex items-center gap-3 lg:gap-6 relative">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="shrink-0 lg:hidden hover:bg-blue-300 hover:text-white focus-visible:ring-white focus-visible:ring-offset-blue-500"
+          aria-label={state?.openSidebar ? "Close sidebar" : "Open sidebar"}
+          aria-expanded={!!state?.openSidebar}
+          onClick={() =>
+            dispatch({
+              type: ACTIONS.OPEN_SIDEBAR,
+              payload: !state?.openSidebar,
+            })
+          }
+        >
+          {!state?.openSidebar ? <Menu /> : <XIcon />}
+        </Button>
+
         {orgloading ? (
           <div className="flex items-center gap-1 lg:w-4/10">
             <div className="flex items-center gap-2 animate-pulse">
@@ -487,27 +504,6 @@ const Topbar = () => {
             </Popover>
           </div>
         )}
-
-        <div
-          className="flex lg:hidden"
-          onClick={() =>
-            dispatch({
-              type: ACTIONS.OPEN_SIDEBAR,
-              payload: !state?.openSidebar,
-            })
-          }
-        >
-          {!state?.openSidebar ? (
-            <Menu />
-          ) : (
-            <XIcon
-              className="text-white cursor-pointer"
-              onClick={() =>
-                dispatch({ type: ACTIONS.OPEN_SIDEBAR, payload: false })
-              }
-            />
-          )}
-        </div>
       </div>
 
       {!pathname.includes(`/${orgSlug}/welcome`) && (
