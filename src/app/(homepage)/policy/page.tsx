@@ -248,8 +248,8 @@ function Policy() {
             </li>
             <p>
               If you are a resident of Nigeria, you may have certain rights
-              regarding your personal information under the Nigerian Data
-              Protection Regulation (NDPR). These rights may include the right
+              regarding your personal information under the Nigeria Data
+              Protection Act (NDP Act) 2023. These rights may include the right
               to access, correct, or delete your personal information.
             </p>
             <br />

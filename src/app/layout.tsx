@@ -7,14 +7,39 @@ import "react-loading-skeleton/dist/skeleton.css";
 import { DataProvider } from "~/store/GlobalState";
 import Script from "next/script";
 import ClientLayout from "./client-layout";
-import { gtmScriptUrl } from "~/lib/env-urls";
+import { gtmScriptUrl, ogImageUrl, siteUrl } from "~/lib/env-urls";
 import { ThemeProvider } from "~/components/theme/theme-provider";
 
 export const metadata: Metadata = {
-  title: "Zedu",
+  title: "Zedu — Structured Learning for Bootcamps & Schools",
+  description:
+    "Zedu is a structured learning platform for bootcamps, schools, and universities. Organize cohorts, channels, and AI-powered learning in one workspace.",
   icons: {
     icon: "/zedu-icon.png",
     apple: "/apple-touch-icon.png",
+  },
+  openGraph: {
+    title: "Zedu — Structured Learning for Bootcamps & Schools",
+    description:
+      "Zedu is a structured learning platform for bootcamps, schools, and universities. Organize cohorts, channels, and AI-powered learning in one workspace.",
+    url: siteUrl(),
+    siteName: "Zedu",
+    images: [
+      {
+        url: ogImageUrl("og-image-5.png"),
+        width: 1200,
+        height: 630,
+        alt: "Zedu — Structured Learning for Bootcamps & Schools",
+      },
+    ],
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Zedu — Structured Learning for Bootcamps & Schools",
+    description:
+      "Zedu is a structured learning platform for bootcamps, schools, and universities. Organize cohorts, channels, and AI-powered learning in one workspace.",
+    images: [ogImageUrl("og-image-5.png")],
   },
 };
 

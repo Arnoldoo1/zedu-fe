@@ -32,6 +32,8 @@ const staticPricingCards: PricingCardData[] = [
     footnote: "No credit card needed",
     features: [
       { text: "Up to 3 cohorts", enabled: true },
+      { text: "Up to 100 members in total", enabled: true },
+      { text: "Up to 5 teachers/admins", enabled: true },
       { text: "Organized learning channels", enabled: true },
       { text: "Basic messaging and threads", enabled: true },
       { text: "File sharing", enabled: true },
@@ -53,6 +55,8 @@ const staticPricingCards: PricingCardData[] = [
     features: [
       { text: "Everything in Starter, and", enabled: true },
       { text: "Unlimited cohorts", enabled: true },
+      { text: "Up to 500 students per cohort", enabled: true },
+      { text: "Up to 50 teachers/admins", enabled: true },
       { text: "Live classes and collaboration tools", enabled: true },
       { text: "AI study assistants", enabled: true },
       { text: "Assignment and cohort management", enabled: true },
@@ -72,6 +76,8 @@ const staticPricingCards: PricingCardData[] = [
     amount: "Let's Talk",
     features: [
       { text: "Everything in Pro, and", enabled: true },
+      { text: "Custom student limits per cohort", enabled: true },
+      { text: "Unlimited teachers/admins", enabled: true },
       { text: "Advanced AI agents and automation", enabled: true },
       { text: "Institution-level workspace control", enabled: true },
       { text: "Security and compliance tools", enabled: true },
