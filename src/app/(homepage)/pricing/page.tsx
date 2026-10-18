@@ -105,7 +105,11 @@ const PricingPage = () => {
           />
         ))}
       </div>
-      <FAQSection />
+
+      <div id="help-center">
+        <FAQSection />
+      </div>
+
       <DynamicFooter
         text="Start Building Structured Learning Today"
         description="Create organized channels, manage cohorts, and bring AI into your learning environment.
