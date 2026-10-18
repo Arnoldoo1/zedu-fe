@@ -415,7 +415,7 @@ const Topbar = () => {
                               item.name !== orgData?.name
                           ) && (
                             <span className="text-sm text-gray-400 px-3 flex items-center justify-center">
-                              You have no pinned organisations yet!!
+                              You have no pinned organization yet.
                             </span>
                           )}
                           {organisations.map((item: any, index: number) => {
