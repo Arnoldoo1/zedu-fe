@@ -310,6 +310,7 @@ function SignUp() {
               </label>
               <div className="w-full flex flex-col gap-[2px]">
                 <input
+                  id="email"
                   type="email"
                   value={email}
                   onChange={handleEmailChange}
@@ -336,6 +337,7 @@ function SignUp() {
               <div className="w-full flex flex-col gap-[2px]">
                 <div className="relative ">
                   <input
+                    id="password"
                     type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={handlePasswordChange}

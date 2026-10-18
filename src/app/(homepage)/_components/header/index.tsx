@@ -127,7 +127,7 @@ const Header: React.FC = () => {
                   <Image
                     className="h-8 w-auto"
                     src={windowWidth < 1024 && isOpen ? logoWhite : logoBlack}
-                    alt="Logo"
+                    alt="Zedu"
                     width={100}
                     height={100}
                   />

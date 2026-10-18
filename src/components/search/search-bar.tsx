@@ -353,7 +353,7 @@ export const SearchInput = ({ name, orgId }: SearchInputProps) => {
             <X className="w-4 h-4 text-white" />
           </button>
         ) : (
-          <kbd className="hidden lg:inline-flex items-center rounded border border-white/30 px-1.5 py-0.5 text-[10px] text-white/80 mr-2">
+          <kbd className="hidden lg:inline-flex shrink-0 whitespace-nowrap items-center rounded border border-white/30 px-1.5 py-0.5 text-[10px] text-white/80 mr-2">
             Ctrl K
           </kbd>
         )}
