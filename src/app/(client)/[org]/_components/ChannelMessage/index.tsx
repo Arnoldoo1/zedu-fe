@@ -194,13 +194,12 @@ const ChannelsMessage = () => {
       id="scrollableDivs"
       ref={scrollableContainerRef}
       style={{
-        height: hasMore || messages?.length ? "100dvh" : "",
         overflowY: "scroll",
         display: "flex",
         flexDirection: "column-reverse",
         paddingBottom: "var(--chat-composer-height, 140px)",
       }}
-      className="w-full"
+      className="min-h-0 w-full flex-1"
     >
       {showBadge && state?.threadCount > 0 && (
         <Badge

@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import SettingsLabel from "../../components/settings-label";
 import { GetRequest, PostRequest } from "~/utils/new-request";
 import Loading from "~/components/ui/loading";
+import { NotificationPermissionHelp } from "~/app/(client)/[org]/_components/notification-permission-guidance";
 
 type Preferences = {
   notificationType: "all" | "mentions" | "nothing";
@@ -117,6 +118,7 @@ const NotificationPage = () => {
   if (loading) {
     return (
       <div className="p-6">
+        <NotificationPermissionHelp />
         <Loading />
       </div>
     );
@@ -126,6 +128,7 @@ const NotificationPage = () => {
     <div>
       <SettingsLabel />
       <div className="p-4 lg:px-8">
+        <NotificationPermissionHelp />
         <div className="mb-6">
           <h1 className="text-base font-semibold">
             Your Notification Preferences

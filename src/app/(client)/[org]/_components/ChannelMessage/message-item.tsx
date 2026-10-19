@@ -53,6 +53,7 @@ import {
   isPreviewableDocument,
 } from "~/utils/document-files";
 import { useRouter } from "next/navigation";
+import { tokenizeMessageText } from "~/app/(client)/[org]/_components/ChannelMessage/tokenize-message-text";
 
 /** @eslint-disable */
 
@@ -225,11 +226,38 @@ const MessageItem: React.FC<MessageItemProps> = ({ item }) => {
     }
   }, [trimmedMessage]);
 
+  const renderPlainTextWithMentions = (text: string, id?: string) =>
+    React.Children.map(linkifyText(text, linkifyOptions), (child) => {
+      if (typeof child !== "string") return child;
+      return tokenizeMessageText(child).map(
+        ({ text: part, isEmail, isMention }, i) => {
+          if (isEmail) return part;
+          if (isMention && (part.startsWith("@") || part.startsWith("#"))) {
+            return (
+              <GlobalMention
+                key={`${part.slice(1)}-${i}`}
+                id={id ?? ""}
+                trigger={part.startsWith("@") ? "@" : "#"}
+                label={part.slice(1).trim()}
+                item={item}
+                currentUser={currentUser}
+              />
+            );
+          }
+          return part;
+        }
+      );
+    });
+
   const renderTextWithMentions = (node: any) => {
     if (!node || !node.props) return node;
 
     const props = node.props;
     const children = props.children;
+
+    if (typeof props.href === "string" && /^mailto:/i.test(props.href)) {
+      return node;
+    }
 
     if (
       (props["data-id"] || props["data-label"]) &&
@@ -257,36 +285,7 @@ const MessageItem: React.FC<MessageItemProps> = ({ item }) => {
     }
 
     if (typeof children === "string") {
-      const mentionRegex = /([@#][a-zA-Z0-9_.-]+(?:\s[a-zA-Z0-9_.-]+)*)/g;
-      const parts = children.split(mentionRegex);
-
-      return parts.map((part: any, i: number) => {
-        if (typeof part === "string" && part.startsWith("@")) {
-          return (
-            <GlobalMention
-              key={`${part.slice(1)}-${i}`}
-              id={props["data-id"]}
-              trigger="@"
-              label={part.slice(1).trim()}
-              item={item}
-              currentUser={currentUser}
-            />
-          );
-        }
-        if (typeof part === "string" && part.startsWith("#")) {
-          return (
-            <GlobalMention
-              key={`${part.slice(1)}-${i}`}
-              id={props["data-id"]}
-              trigger="#"
-              label={part.slice(1).trim()}
-              item={item}
-              currentUser={currentUser}
-            />
-          );
-        }
-        return linkifyText(part, linkifyOptions);
-      });
+      return renderPlainTextWithMentions(children, props["data-id"]);
     }
 
     return node;
@@ -318,7 +317,7 @@ const MessageItem: React.FC<MessageItemProps> = ({ item }) => {
                   >
                     {React.Children.map(children, (child) => {
                       return typeof child === "string"
-                        ? linkifyText(child, linkifyOptions)
+                        ? renderPlainTextWithMentions(child)
                         : renderTextWithMentions(child);
                     })}
                   </p>

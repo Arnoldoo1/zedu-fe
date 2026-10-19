@@ -20,7 +20,6 @@ import { UploadProvider } from "~/store/UploadContext";
 import UploadProgressPopover from "./_components/file-management/UploadProgressPopover";
 import OneSignalProvider from "~/components/layout/onesignal/onesignal-provider";
 import OneSignalSubscriptionSync from "~/components/layout/onesignal/onesignal-subscription";
-import { NotificationBanner } from "./_components/notification-banner";
 import IncomingCallPopupContainer from "~/app/(client)/[org]/_components/buzz-management/IncomingCallPopupContainer";
 import StatusConnection from "~/components/layout/centrifugo/status-connection";
 import ChatBuzzSidePanel from "./_components/buzz-management/chatBuzzSidePanel";
@@ -341,7 +340,6 @@ const ClientLayout = ({
           </div>
         </ChannelBuzzProvider>
         <UploadProgressPopover />
-        <NotificationBanner />
         <IncomingCallPopupContainer />
       </TooltipProvider>
     </UploadProvider>

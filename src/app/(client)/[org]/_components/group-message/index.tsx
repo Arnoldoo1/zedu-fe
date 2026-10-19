@@ -134,13 +134,12 @@ const GroupMessage = ({ participants }: any) => {
       id="scrollableDivs"
       ref={scrollableContainerRef}
       style={{
-        height: "100vh",
         overflowY: "scroll",
         display: "flex",
         flexDirection: "column-reverse",
         paddingBottom: "var(--chat-composer-height, 140px)",
       }}
-      className="w-full"
+      className="min-h-0 w-full flex-1"
     >
       {showBadge && state?.dmCount > 0 && (
         <Badge
