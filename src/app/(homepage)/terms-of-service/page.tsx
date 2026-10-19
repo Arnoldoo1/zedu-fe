@@ -130,7 +130,7 @@ function TermsOfService() {
           </ul>
         </div>
 
-        <div className="mt-16 md:mt-10 w-[375px] md:w-[700px] lg:w-[815px] py-3 px-5 text-black">
+        <div className="mt-16 md:mt-10 w-full min-w-0 md:w-[700px] lg:w-[815px] py-3 px-5 text-black">
           <p className="text-2xl md:text-4xl font-semibold leading-10 pb-2">
             Terms of Service
           </p>
