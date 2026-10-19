@@ -93,7 +93,7 @@ export const PricingSection = ({
         cohort size.
       </p>
       <Link
-        href={"/client/settings/organisation/billing/all-plans"}
+        href="/pricing#compare-plans"
         className="group flex items-center gap-2 font-semibold text-primary-500 hover:underline"
       >
         Compare all plans and features
