@@ -163,7 +163,7 @@ const BootCampsSolutionsPage = () => {
             <div className="relative aspect-[16/11] w-full sm:aspect-[4/3] lg:aspect-[16/10]">
               <Image
                 src="/images/homepage/solutions/bootcamps-hero.png"
-                alt="Students seated together while collaborating in the Zedu school workspace"
+                alt="Students seated together while collaborating in the Zedu bootcamp workspace"
                 fill
                 priority
                 sizes="(max-width: 640px) 100vw, (max-width: 1024px) 90vw, 680px"

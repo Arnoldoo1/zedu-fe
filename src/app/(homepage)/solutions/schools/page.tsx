@@ -206,7 +206,7 @@ const SchoolsSolutionsPage = () => {
             <div className="relative aspect-[16/11] w-full sm:aspect-[4/3] lg:aspect-[16/10]">
               <Image
                 src="/images/homepage/solutions/schools-hero.png"
-                alt="Students seated together while collaborating in the Zedu school workspace"
+                alt="A student wearing a backpack and holding a binder outside a school building"
                 fill
                 priority
                 sizes="(max-width: 640px) 100vw, (max-width: 1024px) 90vw, 680px"
