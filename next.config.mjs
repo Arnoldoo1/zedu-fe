@@ -97,7 +97,11 @@ const nextConfig = {
     unoptimized: true,
   },
   transpilePackages: ["lucide-react"],
-  assetPrefix: isDev ? undefined : "/mainapp",
+  // Deployments that serve the app from the domain root (Coolify) set
+  // NEXT_PUBLIC_ASSET_PREFIX=false; the default keeps the /mainapp prefix
+  // used by the existing hosting.
+  assetPrefix:
+    process.env.NEXT_PUBLIC_ASSET_PREFIX ?? (isDev ? undefined : "/mainapp"),
   compiler: {
     removeConsole: isDev ? false : true,
   },
