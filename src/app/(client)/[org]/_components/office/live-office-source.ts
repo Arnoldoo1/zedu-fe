@@ -53,6 +53,18 @@ function presenceChannel(roomId: string) {
 }
 
 /**
+ * The request helpers resolve with the error instead of throwing, so failures
+ * are turned into an exception the office can show.
+ */
+function unwrap<T>(response: any, fallback: string): T {
+  const status = response?.status;
+  if (typeof status !== "number" || status >= 400) {
+    throw new Error(response?.data?.message ?? fallback);
+  }
+  return response?.data?.data as T;
+}
+
+/**
  * The building's floor plan is fixed; the rooms inside it are real. Each real
  * room takes the next free slot of its kind, so the organisation's own
  * channels and people end up in the rooms a visitor would expect.
@@ -132,7 +144,6 @@ export class LiveOfficeSource implements OfficeSource {
         response?.data?.message ?? "The office could not be loaded right now."
       );
     }
-
     this.channelRoomMap = data.channelRoomMap ?? {};
     this.dmOfficeMap = data.dmOfficeMap ?? {};
     this.dmRoomMap = Object.fromEntries(
@@ -167,44 +178,54 @@ export class LiveOfficeSource implements OfficeSource {
 
     const isPersonal = roomId.startsWith("personal:");
     if (isPersonal) {
-      await PutRequest(`/office/rooms/${encodeRoomId(roomId)}/layout`, payload);
+      unwrap(
+        await PutRequest(
+          `/office/rooms/${encodeRoomId(roomId)}/layout`,
+          payload
+        ),
+        "Your office could not be saved."
+      );
       return;
     }
 
-    await PostRequest(
-      `/office/rooms/${encodeRoomId(roomId)}/layout/draft`,
-      payload
+    unwrap(
+      await PostRequest(
+        `/office/rooms/${encodeRoomId(roomId)}/layout/draft`,
+        payload
+      ),
+      "The draft could not be saved."
     );
   }
 
   async publishLayout(roomId: string, items: OfficeFurnitureItem[]) {
     await this.saveLayout(roomId, items);
-    await PostRequest(`/office/rooms/${encodeRoomId(roomId)}/layout/publish`, {
-      version: 0,
-    });
+    unwrap(
+      await PostRequest(
+        `/office/rooms/${encodeRoomId(roomId)}/layout/publish`,
+        {
+          version: 0,
+        }
+      ),
+      "The layout could not be published."
+    );
   }
 
   async resetLayout(roomId: string) {
-    const response = await PostRequest(
-      `/office/rooms/${encodeRoomId(roomId)}/layout/reset`,
-      {}
+    const layout = unwrap<{ items?: OfficeApiItem[] } | undefined>(
+      await PostRequest(
+        `/office/rooms/${encodeRoomId(roomId)}/layout/reset`,
+        {}
+      ),
+      "The room could not be reset."
     );
-    const layout = response?.data?.data as
-      | {
-          items?: Array<{
-            id: string;
-            catalogId: string;
-            x: number;
-            y: number;
-            rotation: number;
-          }>;
-        }
-      | undefined;
     return (layout?.items ?? []).map(toSceneItem);
   }
 
   async saveAvatar(avatar: OfficeAvatarConfig) {
-    await PutRequest("/users/me/avatar", avatar);
+    unwrap(
+      await PutRequest("/users/me/avatar", avatar),
+      "Your look could not be saved."
+    );
   }
 
   async sendMessage(
@@ -221,9 +242,15 @@ export class LiveOfficeSource implements OfficeSource {
     };
 
     if (roomId.startsWith("channel:")) {
-      await PostRequest(`/channels/${channelId}/messages`, payload);
+      unwrap(
+        await PostRequest(`/channels/${channelId}/messages`, payload),
+        "The message was not sent."
+      );
     } else if (roomId.startsWith("personal:")) {
-      await PostRequest(`/dms/messages/${channelId}`, payload);
+      unwrap(
+        await PostRequest(`/dms/messages/${channelId}`, payload),
+        "The message was not sent."
+      );
     }
 
     return [];
@@ -240,22 +267,30 @@ export class LiveOfficeSource implements OfficeSource {
       },
     });
 
-    const answer = response?.data?.data?.answer;
+    const answer = unwrap<{ answer?: string } | undefined>(
+      response,
+      "Zoe could not answer that right now."
+    )?.answer;
+
     if (typeof answer === "string" && answer.length > 0) {
       return answer;
     }
 
-    throw new Error(
-      response?.data?.message ?? "Zoe could not answer that right now."
-    );
+    throw new Error("Zoe could not answer that right now.");
   }
 
   async enterRoom(roomId: string) {
-    await PostRequest(`/office/rooms/${encodeRoomId(roomId)}/enter`, {});
+    unwrap(
+      await PostRequest(`/office/rooms/${encodeRoomId(roomId)}/enter`, {}),
+      "The room could not be entered."
+    );
   }
 
   async leaveRoom(roomId: string) {
-    await PostRequest(`/office/rooms/${encodeRoomId(roomId)}/leave`, {});
+    unwrap(
+      await PostRequest(`/office/rooms/${encodeRoomId(roomId)}/leave`, {}),
+      "The room could not be left."
+    );
   }
 
   subscribePresence(
