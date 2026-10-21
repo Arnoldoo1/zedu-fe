@@ -23,7 +23,6 @@ import {
   isHomeRoute,
   isNotificationsRoute,
 } from "~/lib/notifications/notification-badge";
-import { OFFICE_ENABLED } from "~/lib/office/flag";
 
 const SideBar: React.FC = () => {
   const pathname = usePathname();
@@ -31,7 +30,6 @@ const SideBar: React.FC = () => {
   const { user, orgSlug, notificationBadgeState } = state;
   const channelId = localStorage.getItem("channelId") || "";
   const notificationBadgeCount = notificationBadgeState?.count ?? 0;
-  const officeEnabled = OFFICE_ENABLED;
 
   useEffect(() => {
     if (!isHomeRoute(pathname) && !isNotificationsRoute(pathname)) return;
@@ -203,30 +201,26 @@ const SideBar: React.FC = () => {
                         <span className="text-white  text-[12px]">Files</span>
                       </Link>
 
-                      {officeEnabled && (
-                        <Link
-                          href={`/${orgSlug}/office`}
-                          data-sidebar-preview="office"
-                          className={`flex flex-col group items-center justify-center p-1 ${
+                      <Link
+                        href={`/${orgSlug}/office`}
+                        data-sidebar-preview="office"
+                        className={`flex flex-col group items-center justify-center p-1 ${
+                          pathname?.includes(`/${orgSlug}/office`)
+                            ? "font-medium scale-[1.05]"
+                            : "hover:font-medium "
+                        } `}
+                      >
+                        <span
+                          className={` rounded-[7px] p-2 block ${
                             pathname?.includes(`/${orgSlug}/office`)
-                              ? "font-medium scale-[1.05]"
-                              : "hover:font-medium "
-                          } `}
+                              ? "bg-blue-200"
+                              : "group-hover:bg-blue-200"
+                          }`}
                         >
-                          <span
-                            className={` rounded-[7px] p-2 block ${
-                              pathname?.includes(`/${orgSlug}/office`)
-                                ? "bg-blue-200"
-                                : "group-hover:bg-blue-200"
-                            }`}
-                          >
-                            <Building2 className="h-5 w-5 text-[#344054]" />
-                          </span>
-                          <span className="text-white  text-[12px]">
-                            Office
-                          </span>
-                        </Link>
-                      )}
+                          <Building2 className="h-5 w-5 text-[#344054]" />
+                        </span>
+                        <span className="text-white  text-[12px]">Office</span>
+                      </Link>
 
                       <Link
                         href={`/${orgSlug}/buzz`}

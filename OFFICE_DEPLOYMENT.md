@@ -116,9 +116,6 @@ NEXT_PUBLIC_CLIENT_URL=https://<your-domain>
 # Serve the app from the domain root instead of /mainapp
 NEXT_PUBLIC_ASSET_PREFIX=false
 
-# Turn the office on: shows the rail icon and enables /[org]/office
-NEXT_PUBLIC_FF_3D_OFFICE=true
-
 # Analytics (the layout always renders these tags)
 NEXT_PUBLIC_GTM_SCRIPT_URL=https://www.googletagmanager.com/gtm.js
 NEXT_PUBLIC_GA_ID=<ga-measurement-id>
@@ -142,8 +139,9 @@ CONTRIBUTOR_HELPER_URL=https://<contributor-helper>
 ZOE_SERVICE_TOKEN=<service-token>
 ```
 
-> `NEXT_PUBLIC_ASSET_PREFIX` and `NEXT_PUBLIC_FF_3D_OFFICE` are read at **build
-> time**. Changing them means a rebuild.
+> `NEXT_PUBLIC_ASSET_PREFIX` is read at **build time**. Changing it means a
+> rebuild. The office itself is not behind a flag: the **Office** icon is in
+> the left rail and `/{org}/office` is always available.
 
 > `NEXT_PUBLIC_ASSET_PREFIX` is a new line in `next.config.mjs`, which is a
 > protected file. It keeps `/mainapp` as the default, so the existing hosting
@@ -156,7 +154,7 @@ ZOE_SERVICE_TOKEN=<service-token>
 1. Deploy the **backend** first and confirm `GET /api/v1/office/bootstrap`
    answers with an organisation's rooms.
 2. Deploy the **frontend** with `NEXT_PUBLIC_BASE_URL` pointing at it.
-3. Turn the office on with `NEXT_PUBLIC_FF_3D_OFFICE=true` and rebuild.
+3. Open an organisation and click the **Office** icon in the left rail.
 
 ## 4. Smoke test
 
@@ -173,6 +171,5 @@ ZOE_SERVICE_TOKEN=<service-token>
 | Symptom                        | Cause                                                                                                       |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------- |
 | Blank page, 404s on `/_next/*` | `NEXT_PUBLIC_ASSET_PREFIX` is still `/mainapp` while the app is served from the root                        |
-| No Office icon in the rail     | `NEXT_PUBLIC_FF_3D_OFFICE` is not `true` (or the build predates it)                                         |
 | "The office could not open"    | The frontend cannot reach `NEXT_PUBLIC_BASE_URL`, or the backend has not run its migration (`MIGRATE=true`) |
 | Zoe says she is not configured | `CONTRIBUTOR_HELPER_URL` and `ZOE_SERVICE_TOKEN` are not set on the frontend                                |
