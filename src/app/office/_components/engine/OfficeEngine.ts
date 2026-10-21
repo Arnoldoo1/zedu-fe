@@ -574,6 +574,18 @@ export class OfficeEngine {
     this.refreshSelection();
   }
 
+  /**
+   * The live building has real people in it, so the seeded teammates are
+   * removed and the real ones arrive over the presence channel.
+   */
+  clearDemoAgents() {
+    for (const agent of this.agents) {
+      this.avatarGroup.remove(agent.rig.group);
+      disposeObject(agent.rig.group);
+    }
+    this.agents = [];
+  }
+
   private addLights() {
     const hemi = new THREE.HemisphereLight(0xdbe4ff, 0x1a1430, 1.7);
     this.scene.add(hemi);

@@ -406,7 +406,10 @@ export default function OfficeDemo({
 
   useEffect(() => {
     engineRef.current?.setRooms(rooms);
-  }, [rooms]);
+    if (source.mode === "live") {
+      engineRef.current?.clearDemoAgents();
+    }
+  }, [rooms, source]);
 
   useEffect(() => {
     engineRef.current?.setAvatar(avatarDraft);
