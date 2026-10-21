@@ -241,6 +241,26 @@ export class OfficeEngine {
   private playerStatus: PresenceStatus = "online";
   private currentRoom: OfficeRoom | null = ROOM_BY_ID.reception;
   private nearZoe = false;
+  private rooms: OfficeRoom[] = ROOMS;
+
+  /**
+   * The building can run on the demo floor plan or on the rooms the office API
+   * derives from an organisation's channels, direct messages and people.
+   */
+  setRooms(rooms: OfficeRoom[]) {
+    if (!rooms.length) return;
+    this.rooms = rooms;
+  }
+
+  private roomAtPosition(x: number, z: number): OfficeRoom | null {
+    for (const room of this.rooms) {
+      const b = room.bounds;
+      if (x >= b.x && x <= b.x + b.w && z >= b.z && z <= b.z + b.d) {
+        return room;
+      }
+    }
+    return null;
+  }
 
   private agents: AgentState[] = [];
   private zoeRig: AvatarRig | null = null;
@@ -2676,7 +2696,7 @@ export class OfficeEngine {
     );
     if (!intersections.length) return;
     const point = intersections[0].point;
-    const targetRoom = roomAt(point.x, point.z);
+    const targetRoom = this.roomAtPosition(point.x, point.z);
     if (!targetRoom) {
       this.callbacks.onInvalidTarget();
       return;
@@ -2795,14 +2815,14 @@ export class OfficeEngine {
     if (!catalogId) return null;
     const current = this.currentRoom;
     if (!current) return "Walk into a room to furnish it.";
-    const hovered = roomAt(x, z);
+    const hovered = this.roomAtPosition(x, z);
     if (!hovered || hovered.id !== current.id) {
       return "That spot is outside this room.";
     }
     const items = this.furnitureItems.filter(
       (item) =>
         item.id !== this.editState.movingId &&
-        roomAt(item.x, item.z)?.id === current.id
+        this.roomAtPosition(item.x, item.z)?.id === current.id
     );
     return validatePlacement(items, catalogId, x, z, rotation, current);
   }
@@ -3137,7 +3157,7 @@ export class OfficeEngine {
       }
       rig.group.position.set(user.position.x, 0, user.position.z);
       this.animateRig(rig, speed, elapsed);
-      const room = roomAt(user.position.x, user.position.z);
+      const room = this.roomAtPosition(user.position.x, user.position.z);
       if (room) user.roomId = room.id;
     }
   }
@@ -3231,7 +3251,10 @@ export class OfficeEngine {
     const now = performance.now();
     if (now - this.lastRoomCheck < 200) return;
     this.lastRoomCheck = now;
-    const room = roomAt(this.playerPosition.x, this.playerPosition.z);
+    const room = this.roomAtPosition(
+      this.playerPosition.x,
+      this.playerPosition.z
+    );
     const nextRoom = room ?? null;
     if (nextRoom?.id !== this.currentRoom?.id) {
       this.currentRoom = nextRoom;

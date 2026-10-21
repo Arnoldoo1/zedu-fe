@@ -9,7 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "~/components/ui/dialog";
-import { ZOE_GREETING, ZOE_QUICK_CHIPS, zoeAnswer } from "./office-data";
+import { ZOE_GREETING, ZOE_QUICK_CHIPS } from "./office-data";
 
 interface ZoeMessage {
   id: string;
@@ -22,11 +22,13 @@ export default function ZoeDialog({
   open,
   roomName,
   nearby,
+  ask,
   onClose,
 }: {
   open: boolean;
   roomName: string;
   nearby: string[];
+  ask: (question: string) => Promise<string>;
   onClose: () => void;
 }) {
   const [messages, setMessages] = useState<ZoeMessage[]>([]);
@@ -89,50 +91,51 @@ export default function ZoeDialog({
     setDraft("");
     setThinking(true);
 
-    const contextRoom = roomName;
-    const contextNearby = nearby.length
-      ? nearby.slice(0, 3).join(", ")
-      : "nobody else in this room";
-
     timeoutRef.current = window.setTimeout(() => {
       setThinking(false);
-      const full = zoeAnswer(text, contextRoom);
-      const contextLine = /\bnearby|\bhere\b|\bwho\b|\bteam\b/.test(
-        text.toLowerCase()
-      )
-        ? `\n\nNearby right now: ${contextNearby}.`
-        : "";
-      const answer = `${full}${contextLine}`;
 
-      setMessages((prev) => [
-        ...prev,
-        { id: answerId, role: "assistant", content: "", streaming: true },
-      ]);
-      setStreaming(true);
+      ask(text)
+        .then((answer) => {
+          setMessages((prev) => [
+            ...prev,
+            { id: answerId, role: "assistant", content: "", streaming: true },
+          ]);
+          setStreaming(true);
 
-      let index = 0;
-      timerRef.current = window.setInterval(() => {
-        index = Math.min(answer.length, index + 3);
-        setMessages((prev) =>
-          prev.map((message) =>
-            message.id === answerId
-              ? { ...message, content: answer.slice(0, index) }
-              : message
-          )
-        );
-        if (index >= answer.length) {
-          if (timerRef.current) window.clearInterval(timerRef.current);
-          timerRef.current = null;
-          setStreaming(false);
-          setMessages((prev) =>
-            prev.map((message) =>
-              message.id === answerId
-                ? { ...message, streaming: false }
-                : message
-            )
-          );
-        }
-      }, 16);
+          let index = 0;
+          timerRef.current = window.setInterval(() => {
+            index = Math.min(answer.length, index + 3);
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.id === answerId
+                  ? { ...message, content: answer.slice(0, index) }
+                  : message
+              )
+            );
+            if (index >= answer.length) {
+              if (timerRef.current) window.clearInterval(timerRef.current);
+              timerRef.current = null;
+              setStreaming(false);
+              setMessages((prev) =>
+                prev.map((message) =>
+                  message.id === answerId
+                    ? { ...message, streaming: false }
+                    : message
+                )
+              );
+            }
+          }, 16);
+        })
+        .catch((error: unknown) => {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Zoe could not answer that right now.";
+          setMessages((prev) => [
+            ...prev,
+            { id: answerId, role: "assistant", content: message },
+          ]);
+        });
     }, 700);
   };
 

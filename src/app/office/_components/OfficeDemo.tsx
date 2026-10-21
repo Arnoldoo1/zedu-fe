@@ -17,12 +17,9 @@ import ZoeDialog from "./ZoeDialog";
 import { Onboarding, TourOverlay, type TourStep } from "./Onboarding";
 import {
   CATALOG_BY_ID,
-  CHAT_SEEDS,
   DEFAULT_AVATAR,
-  DEMO_LAYOUTS,
   DEMO_USER_ID,
   DEMO_USERS,
-  ROOMS,
   ROOM_BY_ID,
   roomAt,
   type AvatarConfig,
@@ -31,14 +28,14 @@ import {
   type PresenceStatus,
   validatePlacement,
 } from "./office-data";
+import { demoSource } from "./demo-office-source";
+import type { OfficeSource, OfficeZoeContext } from "~/types/office";
 import {
   OfficeEngine,
   type EngineCallbacks,
   type EditState,
 } from "./engine/OfficeEngine";
 
-const KEY_LAYOUTS = "office-demo-layouts-v1";
-const KEY_AVATAR = "office-demo-avatar-v1";
 const KEY_ONBOARDING = "office-demo-onboarding-v1";
 
 const initialPresence: PresencePoint[] = DEMO_USERS.filter(
@@ -198,33 +195,34 @@ const LIVE_LINES: Record<string, string[]> = {
   default: ["Quick sync later?", "Nice work."],
 };
 
-function buildDefaultLayouts(): Record<string, FurnitureItem[]> {
-  const next: Record<string, FurnitureItem[]> = {};
-  for (const room of ROOMS) {
-    next[room.id] = (DEMO_LAYOUTS[room.id] ?? []).map((item) => ({ ...item }));
-  }
-  return next;
-}
-
-function statusForRoom(roomId: string | null): PresenceStatus {
-  if (!roomId) return "online";
-  const room = ROOM_BY_ID[roomId];
-  if (!room) return "online";
-  if (room.kind === "focus") return "dnd";
-  if (room.kind === "meeting") return "call";
-  return "online";
-}
-
-export default function OfficeDemo() {
-  const [phase, setPhase] = useState<"entry" | "office">("entry");
+export default function OfficeDemo({
+  source = demoSource,
+}: {
+  source?: OfficeSource;
+}) {
+  const rooms = source.rooms;
+  const roomById = useMemo(() => {
+    const map: Record<string, (typeof rooms)[number]> = {};
+    for (const room of rooms) map[room.id] = room;
+    return map;
+  }, [rooms]);
+  const [phase, setPhase] = useState<"entry" | "office">(
+    source.mode === "live" ? "office" : "entry"
+  );
   const [ready, setReady] = useState(false);
   const [engineError, setEngineError] = useState<string | null>(null);
 
-  const [avatar, setAvatar] = useState<AvatarConfig>(DEFAULT_AVATAR);
-  const [avatarDraft, setAvatarDraft] = useState<AvatarConfig>(DEFAULT_AVATAR);
-  const [layouts, setLayouts] =
-    useState<Record<string, FurnitureItem[]>>(buildDefaultLayouts);
-  const [roomId, setRoomId] = useState<string | null>("reception");
+  const [avatar, setAvatar] = useState<AvatarConfig>(source.initialAvatar);
+  const [avatarDraft, setAvatarDraft] = useState<AvatarConfig>(
+    source.initialAvatar
+  );
+  const [layouts, setLayouts] = useState<Record<string, FurnitureItem[]>>(
+    () => source.initialLayouts
+  );
+  const [roomId, setRoomId] = useState<string | null>(
+    () =>
+      rooms.find((room) => room.id === "reception")?.id ?? rooms[0]?.id ?? null
+  );
   const [player, setPlayer] = useState({ x: 8.5, z: 9.4, yaw: Math.PI });
   const [presence, setPresence] = useState<PresencePoint[]>(initialPresence);
   const [nearZoe, setNearZoe] = useState(false);
@@ -247,7 +245,7 @@ export default function OfficeDemo() {
 
   const [messagesByRoom, setMessagesByRoom] = useState<
     Record<string, ChatMessage[]>
-  >(() => ({ ...CHAT_SEEDS }));
+  >(() => ({ ...source.initialMessages }));
   const [unread, setUnread] = useState(0);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "draft">(
     "saved"
@@ -268,7 +266,7 @@ export default function OfficeDemo() {
   const lastInvalidRef = useRef(0);
   const autoTourRef = useRef(false);
 
-  const currentRoom = roomId ? (ROOM_BY_ID[roomId] ?? null) : null;
+  const currentRoom = roomId ? (roomById[roomId] ?? null) : null;
   const currentItems = currentRoom ? (layouts[currentRoom.id] ?? []) : [];
   const selectedItem =
     currentRoom && selectedFurnitureId
@@ -407,6 +405,10 @@ export default function OfficeDemo() {
   }, []);
 
   useEffect(() => {
+    engineRef.current?.setRooms(rooms);
+  }, [rooms]);
+
+  useEffect(() => {
     engineRef.current?.setAvatar(avatarDraft);
   }, [avatarDraft]);
 
@@ -509,31 +511,10 @@ export default function OfficeDemo() {
   }, []);
 
   useEffect(() => {
-    try {
-      const savedAvatar = localStorage.getItem(KEY_AVATAR);
-      if (savedAvatar) {
-        const parsed = JSON.parse(savedAvatar) as AvatarConfig;
-        const next = { ...DEFAULT_AVATAR, ...parsed };
-        setAvatar(next);
-        setAvatarDraft(next);
-      }
-
-      const savedLayouts = localStorage.getItem(KEY_LAYOUTS);
-      if (savedLayouts) {
-        const parsed = JSON.parse(savedLayouts) as Record<
-          string,
-          FurnitureItem[]
-        >;
-        setLayouts((previous) => {
-          const next = { ...previous };
-          for (const [id, items] of Object.entries(parsed)) {
-            if (ROOM_BY_ID[id] && Array.isArray(items)) next[id] = items;
-          }
-          return next;
-        });
-      }
-    } catch {
-      // Local storage is best effort in the demo.
+    if (source.mode === "demo") {
+      void source.loadLayouts().then((loaded) => {
+        setLayouts(loaded);
+      });
     }
 
     if (window.matchMedia("(max-width: 900px)").matches) {
@@ -541,27 +522,32 @@ export default function OfficeDemo() {
       setMapOpen(false);
     }
     setHydrated(true);
-  }, []);
+  }, [source]);
 
   useEffect(() => {
     if (!hydrated) return;
     setSaveState("saving");
     const timer = window.setTimeout(() => {
-      try {
-        localStorage.setItem(KEY_LAYOUTS, JSON.stringify(layouts));
-      } catch {
-        // Ignore quota / private mode failures.
-      }
       const state = stateRef.current;
-      const room = state.roomId ? ROOM_BY_ID[state.roomId] : null;
-      setSaveState(
-        state.editorActive && room && room.kind !== "personal"
-          ? "draft"
-          : "saved"
-      );
+      const room = state.roomId ? roomById[state.roomId] : null;
+      const roomKey = state.roomId;
+      const items = roomKey ? (state.layouts[roomKey] ?? []) : [];
+
+      void source
+        .saveLayout(roomKey ?? "", items)
+        .catch(() => {
+          // The scene keeps the local state; the next save retries.
+        })
+        .finally(() => {
+          setSaveState(
+            state.editorActive && room && room.kind !== "personal"
+              ? "draft"
+              : "saved"
+          );
+        });
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [layouts, hydrated]);
+  }, [layouts, hydrated, source, roomById]);
 
   useEffect(() => {
     if (!editorActive) setSaveState("saved");
@@ -586,7 +572,9 @@ export default function OfficeDemo() {
   }, [phase, roomId]);
 
   useEffect(() => {
-    if (phase !== "office") return;
+    // The live office gets its messages from the real conversation, so only
+    // the demo simulates the chatter.
+    if (phase !== "office" || source.mode !== "demo") return;
     const timer = window.setInterval(() => {
       const state = stateRef.current;
       if (
@@ -596,7 +584,7 @@ export default function OfficeDemo() {
       ) {
         return;
       }
-      const room = ROOM_BY_ID[state.roomId];
+      const room = roomById[state.roomId];
       if (!room) return;
       const participants = DEMO_USERS.filter(
         (user) =>
@@ -623,7 +611,7 @@ export default function OfficeDemo() {
       if (!state.chatOpen) setUnread((value) => value + 1);
     }, 22000);
     return () => window.clearInterval(timer);
-  }, [phase]);
+  }, [phase, source, roomById]);
 
   useEffect(() => {
     if (!ready || autoTourRef.current) return;
@@ -634,6 +622,33 @@ export default function OfficeDemo() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
+
+  // The live office listens for real presence over Centrifugo.
+  useEffect(() => {
+    if (source.mode !== "live" || phase !== "office") return;
+
+    return source.subscribePresence((occupants) => {
+      setPresence((previous) => {
+        const next = [...previous];
+        for (const occupant of occupants) {
+          const index = next.findIndex((agent) => agent.id === occupant.userId);
+          const point: PresencePoint = {
+            id: occupant.userId,
+            x: occupant.position?.x ?? 0,
+            z: occupant.position?.z ?? 0,
+            roomId: occupant.roomId,
+            status: occupant.status ?? "online",
+          };
+          if (index >= 0) {
+            next[index] = point;
+          } else {
+            next.push(point);
+          }
+        }
+        return next;
+      });
+    });
+  }, [source, phase]);
 
   // ------------------------------------------------------------------- handlers
 
@@ -667,7 +682,7 @@ export default function OfficeDemo() {
 
     if (
       room?.kind === "focus" &&
-      ROOM_BY_ID[previousId ?? ""]?.kind !== "focus"
+      roomById[previousId ?? ""]?.kind !== "focus"
     ) {
       showInfo("Focus mode", "Your status is now Do not disturb.");
     }
@@ -741,7 +756,7 @@ export default function OfficeDemo() {
 
   function placeFurniture(x: number, z: number) {
     const state = stateRef.current;
-    const room = state.roomId ? ROOM_BY_ID[state.roomId] : null;
+    const room = state.roomId ? roomById[state.roomId] : null;
     const catalogId = state.editorCatalogId;
     if (!room || !catalogId) return;
     const hovered = roomAt(x, z);
@@ -780,7 +795,7 @@ export default function OfficeDemo() {
 
   function moveFurniture(id: string, x: number, z: number) {
     const state = stateRef.current;
-    const room = state.roomId ? ROOM_BY_ID[state.roomId] : null;
+    const room = state.roomId ? roomById[state.roomId] : null;
     if (!room) return;
     const items = state.layouts[room.id] ?? [];
     const item = items.find((entry) => entry.id === id);
@@ -814,7 +829,7 @@ export default function OfficeDemo() {
 
   function rotateSelected() {
     const state = stateRef.current;
-    const room = state.roomId ? ROOM_BY_ID[state.roomId] : null;
+    const room = state.roomId ? roomById[state.roomId] : null;
     if (!room) return;
     if (!state.selectedFurnitureId) {
       if (state.editorCatalogId) {
@@ -865,7 +880,7 @@ export default function OfficeDemo() {
 
   function deleteSelected() {
     const state = stateRef.current;
-    const room = state.roomId ? ROOM_BY_ID[state.roomId] : null;
+    const room = state.roomId ? roomById[state.roomId] : null;
     if (!room || !state.selectedFurnitureId) return;
     const items = state.layouts[room.id] ?? [];
     const item = items.find((entry) => entry.id === state.selectedFurnitureId);
@@ -921,24 +936,38 @@ export default function OfficeDemo() {
   function resetRoom() {
     const room = currentRoom;
     if (!room) return;
-    const defaults = (DEMO_LAYOUTS[room.id] ?? []).map((item) => ({ ...item }));
-    commitRoom(room.id, defaults);
-    setSelectedFurnitureId(null);
-    setEditorCatalogId(null);
-    setEditorMovingId(null);
-    showSuccess("Room reset", "Back to the starter layout.");
+    void source
+      .resetLayout(room.id)
+      .then((defaults) => {
+        commitRoom(room.id, defaults);
+        setSelectedFurnitureId(null);
+        setEditorCatalogId(null);
+        setEditorMovingId(null);
+        showSuccess("Room reset", "Back to the starter layout.");
+      })
+      .catch(() => {
+        showError("Could not reset the room", "Try again in a moment.");
+      });
   }
 
   function publishLayout() {
     if (!currentRoom) return;
+    const room = currentRoom;
+    const items = layouts[room.id] ?? [];
     setSaveState("saving");
-    schedule(() => {
-      setSaveState("saved");
-      showSuccess(
-        "Layout published",
-        `12 people in Zedu HQ can see the new ${currentRoom.name} arrangement.`
-      );
-    }, 650);
+    void source
+      .publishLayout(room.id, items)
+      .then(() => {
+        setSaveState("saved");
+        showSuccess(
+          "Layout published",
+          `Everyone in ${room.name} can see the new arrangement.`
+        );
+      })
+      .catch(() => {
+        setSaveState("draft");
+        showError("Could not publish", "Your draft is still saved locally.");
+      });
   }
 
   function clearSelection() {
@@ -964,7 +993,7 @@ export default function OfficeDemo() {
       closeEditor();
       return;
     }
-    const room = state.roomId ? ROOM_BY_ID[state.roomId] : null;
+    const room = state.roomId ? roomById[state.roomId] : null;
     if (!room) {
       showInfo("Find a room first", "Walk into a room to furnish it.");
       return;
@@ -1020,13 +1049,15 @@ export default function OfficeDemo() {
 
   function saveAvatar() {
     setAvatar(avatarDraft);
-    try {
-      localStorage.setItem(KEY_AVATAR, JSON.stringify(avatarDraft));
-    } catch {
-      // Ignore private-mode storage failures.
-    }
-    setAvatarOpen(false);
-    showSuccess("Look saved", "Everyone in The Office will see it.");
+    void source
+      .saveAvatar(avatarDraft)
+      .then(() => {
+        setAvatarOpen(false);
+        showSuccess("Look saved", "Everyone in The Office will see it.");
+      })
+      .catch(() => {
+        showError("Could not save your look", "Try again in a moment.");
+      });
   }
 
   function cancelAvatar() {
@@ -1036,7 +1067,7 @@ export default function OfficeDemo() {
 
   function toggleChat() {
     const state = stateRef.current;
-    const room = state.roomId ? ROOM_BY_ID[state.roomId] : null;
+    const room = state.roomId ? roomById[state.roomId] : null;
     if (!state.chatOpen && (!room || !room.chat)) {
       showInfo("No chat here", "Walk into a channel room or a private office.");
       return;
@@ -1058,7 +1089,7 @@ export default function OfficeDemo() {
 
   function sendChat(text: string) {
     const state = stateRef.current;
-    const room = state.roomId ? ROOM_BY_ID[state.roomId] : null;
+    const room = state.roomId ? roomById[state.roomId] : null;
     if (!room) return;
     appendMessage({
       id: `me-${Date.now()}`,
@@ -1070,6 +1101,13 @@ export default function OfficeDemo() {
       self: true,
     });
     engineRef.current?.showBubble("you", text);
+
+    if (source.mode === "live") {
+      void source.sendMessage(room.id, text).catch(() => {
+        showError("Message not sent", "Check your connection and try again.");
+      });
+      return;
+    }
 
     const responder =
       DEMO_USERS.find(
@@ -1093,6 +1131,23 @@ export default function OfficeDemo() {
       },
       1100 + Math.random() * 800
     );
+  }
+
+  async function askZoe(question: string): Promise<string> {
+    const context: OfficeZoeContext = {
+      room: {
+        id: currentRoom?.id ?? "lobby",
+        kind: (currentRoom?.kind ??
+          "lobby") as OfficeZoeContext["room"]["kind"],
+        name: currentRoom?.name ?? "The Office",
+      },
+      nearbyUsers: nearbyNames.map((name) => ({
+        displayName: name,
+        status: "online" as const,
+      })),
+    };
+
+    return source.askZoe(question, context);
   }
 
   function dismissOnboarding() {
@@ -1195,7 +1250,7 @@ export default function OfficeDemo() {
   }
 
   function navigateToRoom(id: string) {
-    const room = ROOM_BY_ID[id];
+    const room = roomById[id];
     if (!room) return;
     if (room.locked) {
       showError("Locked room", room.description);
@@ -1319,7 +1374,7 @@ export default function OfficeDemo() {
         <>
           <Hud
             room={currentRoom}
-            rooms={ROOMS}
+            rooms={rooms}
             onlineCount={onlineCount}
             currentRoomId={roomId}
             player={player}
@@ -1344,7 +1399,7 @@ export default function OfficeDemo() {
 
           <RoomDirectory
             open={directoryOpen}
-            rooms={ROOMS}
+            rooms={rooms}
             currentRoomId={roomId}
             presence={presence}
             playerRoomId={roomId}
@@ -1420,6 +1475,7 @@ export default function OfficeDemo() {
         open={zoeOpen}
         roomName={currentRoom?.name ?? "the corridor"}
         nearby={nearbyNames}
+        ask={askZoe}
         onClose={() => setZoeOpen(false)}
       />
 
