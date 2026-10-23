@@ -43,6 +43,7 @@ export const ArrowBtn = ({
   linkToHome,
   inverted,
   hideArrow = false,
+  disabled = false,
 }: {
   text: string;
   onClick?: () => void;
@@ -51,6 +52,7 @@ export const ArrowBtn = ({
   hideArrow?: boolean;
   linkToHome?: boolean;
   inverted?: boolean;
+  disabled?: boolean;
 }) => {
   const [token, setToken] = useState<string | null>(null);
   const [orgSlug, setOrgSlug] = useState<string | null>(null);
@@ -61,6 +63,22 @@ export const ArrowBtn = ({
   }, []);
 
   if (linkToHome) href = token ? `/${orgSlug}` : "/auth/sign-up";
+
+  if (disabled) {
+    return (
+      <button
+        type="button"
+        disabled
+        aria-disabled="true"
+        className={cn(
+          "bg-neutral-200 text-neutral-500 px-4 py-2.5 sm:px-6 sm:py-3 font-medium rounded-full flex items-center gap-3 cursor-not-allowed",
+          className
+        )}
+      >
+        {text}
+      </button>
+    );
+  }
 
   return (
     <Link href={href || "#"}>
