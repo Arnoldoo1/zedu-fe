@@ -62,6 +62,19 @@ export interface OfficeBuilding {
   name: string;
 }
 
+/**
+ * One storey of the tower. Index 0 is the general floor, which sits above the
+ * member floors and holds every channel in the organisation.
+ */
+export interface OfficeFloor {
+  index: number;
+  kind: "general" | "member";
+  name: string;
+  capacity: number;
+  members: number;
+  hasPortal: boolean;
+}
+
 /** A room exactly as the office API returns it (two dimensional). */
 export interface OfficeApiRoom {
   id: string;
@@ -101,6 +114,7 @@ export interface OfficeSettings {
 export interface OfficeBootstrap {
   building: OfficeBuilding;
   settings: OfficeSettings;
+  floors: OfficeFloor[];
   rooms: OfficeApiRoom[];
   layouts: Record<string, OfficeApiLayout>;
   channelRoomMap: Record<string, string>;
@@ -139,6 +153,8 @@ export interface OfficeZoeContext {
 export interface OfficeSource {
   /** Human readable name of the environment, shown in the HUD. */
   readonly mode: "demo" | "live";
+  /** The tower directory: the general floor first, then the member floors. */
+  readonly floors: OfficeFloor[];
   readonly rooms: OfficeRoom[];
   readonly initialLayouts: Record<string, OfficeFurnitureItem[]>;
   readonly initialMessages: Record<string, OfficeChatMessage[]>;

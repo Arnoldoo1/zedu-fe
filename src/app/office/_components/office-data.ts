@@ -9,7 +9,8 @@ export type RoomKind =
   | "meeting"
   | "focus"
   | "channel"
-  | "personal";
+  | "personal"
+  | "area";
 
 export type PresenceStatus = "online" | "idle" | "away" | "call" | "dnd";
 
@@ -39,6 +40,8 @@ export interface OfficeRoom {
   refId?: string;
   capacity: number;
   locked: boolean;
+  /** Storey of the tower. The general floor is 0; member floors start at 1. */
+  floorIndex?: number;
   accent: string;
   floor: string;
   bounds: Bounds;

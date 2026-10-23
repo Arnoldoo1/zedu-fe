@@ -13,6 +13,7 @@ import type {
   OfficeAvatarConfig,
   OfficeBootstrap,
   OfficeChatMessage,
+  OfficeFloor,
   OfficeFurnitureItem,
   OfficeOccupant,
   OfficeRoom,
@@ -119,6 +120,28 @@ async function readEventStream(response: Response): Promise<string> {
 }
 
 /**
+ * Neutral scene for the per-floor extras the server derives (a visitors area,
+ * open pods, a game area). Only the palette is used; name and footprint come
+ * from the API.
+ */
+const AREA_FALLBACK_ROOM: OfficeRoom = {
+  id: "area:0:area",
+  kind: "area",
+  name: "Area",
+  shortName: "Area",
+  capacity: 12,
+  locked: false,
+  floorIndex: 0,
+  accent: "#8b5cf6",
+  floor: "#1b2030",
+  bounds: { x: 0, z: 0, w: 7, d: 6 },
+  description: "A shared corner of this floor.",
+  spawn: { x: 3, z: 3 },
+  door: { x: 3, z: 6 },
+  chat: true,
+};
+
+/**
  * The building's floor plan is fixed; the rooms inside it are real. Each real
  * room takes the next free slot of its kind, so the organisation's own
  * channels and people end up in the rooms a visitor would expect.
@@ -148,29 +171,50 @@ function buildRooms(apiRooms: OfficeApiRoom[]): OfficeRoom[] {
     used[kind] = index + 1;
 
     const slot = available[index] ?? available[available.length - 1];
-    if (!slot) continue;
+
+    // The per-floor extras are not seeded scenes: the API owns their name and
+    // footprint, so they fall back to a neutral template and derive the walk-in
+    // point from the bounds the server sends.
+    const template =
+      slot ?? (room.kind === "area" ? { ...AREA_FALLBACK_ROOM } : undefined);
+    if (!template) continue;
+
+    // Bounds come from the API (source of truth), in two dimensions. Convert
+    // them to the scene's x/z plane.
+    const bounds = room.bounds
+      ? {
+          x: room.bounds.x,
+          z: room.bounds.y,
+          w: room.bounds.w,
+          d: room.bounds.h,
+        }
+      : template.bounds;
+
+    // Offices and areas are laid out by the server, so their walk-in point
+    // must follow the footprint rather than the demo's static slot.
+    const derived = room.kind === "personal" || room.kind === "area";
+    const spawn = derived
+      ? { x: bounds.x + bounds.w / 2, z: bounds.z + bounds.d / 2 }
+      : template.spawn;
+    const door = derived
+      ? { x: bounds.x + bounds.w / 2, z: bounds.z + bounds.d }
+      : template.door;
 
     rooms.push({
-      ...slot,
+      ...template,
       id: room.id,
       name: room.name,
       shortName: room.name,
       kind: room.kind,
       refId: room.refId,
-      capacity: room.capacity || slot.capacity,
+      capacity: room.capacity || template.capacity,
       locked: Boolean(room.isLocked),
-      description: slot.description,
+      description: template.description,
       ownerId: room.refId,
-      // Use bounds from the API (source of truth) instead of static slot bounds.
-      // Convert API bounds (x, y, w, h) to FE OfficeBounds (x, z, w, d).
-      bounds: room.bounds
-        ? {
-            x: room.bounds.x,
-            z: room.bounds.y,
-            w: room.bounds.w,
-            d: room.bounds.h,
-          }
-        : slot.bounds,
+      floorIndex: room.floorIndex ?? 0,
+      bounds,
+      spawn,
+      door,
     });
   }
 
@@ -196,6 +240,7 @@ export class OfficeDisabledError extends Error {
 export class LiveOfficeSource implements OfficeSource {
   readonly mode = "live" as const;
 
+  floors: OfficeFloor[] = [];
   rooms: OfficeRoom[] = [];
   initialLayouts: Record<string, OfficeFurnitureItem[]> = {};
   initialMessages: Record<string, OfficeChatMessage[]> = {};
@@ -240,6 +285,7 @@ export class LiveOfficeSource implements OfficeSource {
     );
 
     this.rooms = buildRooms(data.rooms ?? []);
+    this.floors = data.floors ?? [];
     this.floorByRoom = Object.fromEntries(
       (data.rooms ?? []).map((room) => [room.id, room.floorIndex ?? 0])
     );
