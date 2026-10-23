@@ -18,6 +18,12 @@ export const ORG_SETTINGS_NAV_ITEMS: Array<{
     access: "manage:organization",
   },
   {
+    id: "office",
+    title: "The Office",
+    pathSegment: "office",
+    access: "manage:organization",
+  },
+  {
     id: "user-management",
     title: "User Management",
     pathSegment: "user-management",

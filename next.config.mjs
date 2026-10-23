@@ -65,6 +65,23 @@ function hostnameFromEnv(name) {
   }
 }
 
+/**
+ * The path every static asset is served under. It is fixed at build time, so
+ * each deployment states it: the path-based host keeps /mainapp, and a host
+ * served from the domain root sets NEXT_PUBLIC_ASSET_PREFIX=false (or "").
+ * Anything else is read as a path, with a leading slash.
+ */
+function assetPrefixFromEnv() {
+  const configured = process.env.NEXT_PUBLIC_ASSET_PREFIX;
+
+  if (configured === undefined) return isDev ? undefined : "/mainapp";
+  if (configured === "" || configured === "false" || configured === "/") {
+    return undefined;
+  }
+
+  return configured.startsWith("/") ? configured : `/${configured}`;
+}
+
 const imageHostnames = [
   "images.unsplash.com",
   "images.stockcake.com",
@@ -97,7 +114,7 @@ const nextConfig = {
     unoptimized: true,
   },
   transpilePackages: ["lucide-react"],
-  assetPrefix: isDev ? undefined : "/mainapp",
+  assetPrefix: assetPrefixFromEnv(),
   compiler: {
     removeConsole: isDev ? false : true,
   },

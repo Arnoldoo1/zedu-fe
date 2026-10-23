@@ -14,6 +14,7 @@ import {
   Webhook,
   Palette,
   Layers,
+  Building2,
 } from "lucide-react";
 import {
   Accordion,
@@ -33,6 +34,7 @@ import { evaluatePermissionRequirement } from "~/components/rbac/RequirePermissi
 
 const ORG_NAV_ICONS: Record<string, React.ReactNode> = {
   general: <SettingsIcon className="w-5" />,
+  office: <Building2 className="w-5" />,
   "user-management": <UsersIcon className="w-5" />,
   "roles-permissions": <UserIcon className="w-5" />,
   webhooks: <Webhook className="w-5" />,
