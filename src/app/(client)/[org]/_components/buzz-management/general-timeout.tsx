@@ -81,8 +81,11 @@ const GeneralTimeout = ({ handleLeave }: { handleLeave: any }) => {
             </div>
           </div>
           <button
+            type="button"
             onClick={() => setIsVisible(false)}
-            className="text-gray-400 hover:text-white transition-colors"
+            aria-label="Dismiss"
+            title="Dismiss"
+            className="text-gray-400 hover:text-gray-700 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
