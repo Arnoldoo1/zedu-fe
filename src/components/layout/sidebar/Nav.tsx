@@ -213,12 +213,12 @@ export default function ChannelNav({
                 <Link
                   href={`/${orgSlug}/home/channels`}
                   className={cn(
-                    "relative px-2 mx-2 py-[6px] flex items-center justify-between rounded-lg group hover:border-blue-200 border border-[#4B4BB4] cursor-pointer"
+                    "relative px-2 mx-2 py-[6px] flex items-center justify-between rounded-lg group border border-blue-400 bg-blue-200 text-blue-950 hover:bg-blue-100 hover:border-blue-500 transition-colors cursor-pointer"
                   )}
                 >
                   <p
                     className={cn(
-                      "text-[14px] leading-4 truncate text-blue-50"
+                      "text-[14px] leading-4 truncate text-blue-950"
                     )}
                   >
                     View all channels
