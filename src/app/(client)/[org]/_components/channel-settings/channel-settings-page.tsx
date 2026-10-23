@@ -69,11 +69,13 @@ export default function ChannelSettingsPage() {
         </div>
 
         <div className="border-b border-[#E6EAEF] dark:border-white/10 mb-6 overflow-x-auto overflow-y-hidden">
-          <div className="flex gap-6 min-w-max">
+          <div className="flex gap-6 min-w-max" role="tablist">
             {tabs.map((item) => (
               <button
                 key={item.id}
                 type="button"
+                role="tab"
+                aria-selected={tab === item.id}
                 onClick={() => setTab(item.id)}
                 className={cn(
                   "pb-3 text-sm font-semibold border-b-2 -mb-px",
