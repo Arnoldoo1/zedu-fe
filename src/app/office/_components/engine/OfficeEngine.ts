@@ -15,7 +15,8 @@ import {
   roomAt,
   validatePlacement,
 } from "../office-data";
-import type { OfficeOccupant } from "~/types/office";
+import type { OfficeFloor, OfficeOccupant } from "~/types/office";
+import { TowerScene, type TowerOffice } from "./tower-scene";
 
 export interface EngineCallbacks {
   onReady: () => void;
@@ -38,6 +39,12 @@ export interface EngineCallbacks {
   onInvalidTarget: () => void;
   /** Live feedback for the placement ghost (valid / why it is not). */
   onGhostState?: (valid: boolean, reason: string | null) => void;
+  /** A person's office was clicked in the tower. */
+  onTowerPick?: (office: { roomId: string; floorIndex: number }) => void;
+  /** What the pointer is over in the tower, for the hover card. */
+  onTowerHover?: (office: TowerOffice | null) => void;
+  /** The floor the 3D interior is showing changed. */
+  onFloorChange?: (floorIndex: number) => void;
 }
 
 export interface EditState {
@@ -243,6 +250,12 @@ export class OfficeEngine {
   private currentRoom: OfficeRoom | null = ROOM_BY_ID.reception;
   private nearZoe = false;
   private rooms: OfficeRoom[] = ROOMS;
+  private allRooms: OfficeRoom[] = ROOMS;
+  private activeFloor = 0;
+  private view: "floor" | "tower" = "floor";
+  private tower: TowerScene | null = null;
+  private towerFloors: OfficeFloor[] = [];
+  private towerOffices: TowerOffice[] = [];
 
   private agentRigs = new Map<string, AvatarRig>();
   private isLive = false;
@@ -253,7 +266,112 @@ export class OfficeEngine {
    */
   setRooms(rooms: OfficeRoom[]) {
     if (!rooms.length) return;
-    this.rooms = rooms;
+    this.allRooms = rooms;
+    const next = this.roomsOnFloor(this.activeFloor);
+    const unchanged =
+      next.length === this.rooms.length &&
+      next.every((room, index) => room === this.rooms[index]);
+    if (unchanged) return;
+    this.rooms = next;
+    this.rebuildFloorContent();
+  }
+
+  private roomsOnFloor(index: number): OfficeRoom[] {
+    return this.allRooms.filter((room) => (room.floorIndex ?? 0) === index);
+  }
+
+  /** Give the tower the floor directory and the people who sit in it. */
+  setTower(floors: OfficeFloor[], offices: TowerOffice[]) {
+    this.towerFloors = floors;
+    this.towerOffices = offices;
+    this.tower?.setData(floors, offices);
+  }
+
+  /** Update who is in which office without rebuilding the tower. */
+  setTowerOffices(offices: TowerOffice[]) {
+    this.towerOffices = offices;
+    if (this.view === "tower") {
+      this.tower?.setData(this.towerFloors, offices);
+    }
+  }
+
+  setView(view: "floor" | "tower") {
+    if (this.view === view) return;
+    this.view = view;
+
+    const floorGroups = [
+      this.buildingGroup,
+      this.staticGroup,
+      this.furnitureGroup,
+      this.avatarGroup,
+      this.ghostGroup,
+    ];
+
+    if (view === "tower") {
+      if (!this.tower) {
+        this.tower = new TowerScene();
+        this.tower.group.visible = false;
+        this.scene.add(this.tower.group);
+        this.tower.setData(this.towerFloors, this.towerOffices);
+      }
+      this.tower.setData(this.towerFloors, this.towerOffices);
+      this.tower.group.visible = true;
+      for (const group of floorGroups) group.visible = false;
+      this.path = [];
+      this.playerVelocity.set(0, 0);
+      return;
+    }
+
+    this.tower && (this.tower.group.visible = false);
+    for (const group of floorGroups) group.visible = true;
+    this.cinematic = false;
+  }
+
+  /** Show a floor of the 3D interior, rebuilding only that floor's rooms. */
+  setActiveFloor(index: number) {
+    if (index === this.activeFloor) return;
+    this.activeFloor = index;
+    this.rooms = this.roomsOnFloor(index);
+    this.rebuildFloorContent();
+    this.callbacks.onFloorChange?.(index);
+  }
+
+  getActiveFloor() {
+    return this.activeFloor;
+  }
+
+  /** Fly into a person's office: switch floor, then stand at its door. */
+  focusRoom(roomId: string) {
+    const room = this.allRooms.find((item) => item.id === roomId);
+    if (!room) {
+      this.callbacks.onInvalidTarget();
+      return;
+    }
+    if ((room.floorIndex ?? 0) !== this.activeFloor) {
+      this.activeFloor = room.floorIndex ?? 0;
+      this.rooms = this.roomsOnFloor(this.activeFloor);
+      this.rebuildFloorContent();
+      this.callbacks.onFloorChange?.(this.activeFloor);
+    }
+    this.playerPosition.set(room.spawn.x, 0, room.spawn.z);
+    this.playerYaw = Math.PI;
+    this.path = [];
+    this.playerVelocity.set(0, 0);
+    this.currentRoom = room;
+    this.lastRoomCheck = 0;
+    this.cameraTarget.set(room.spawn.x, 1.1, room.spawn.z);
+    this.cameraPosition.set(room.spawn.x, 6, room.spawn.z + 8);
+    this.playerRig?.group.position.set(room.spawn.x, 0, room.spawn.z);
+    this.callbacks.onRoomChange(room);
+    this.pushPosition(true);
+  }
+
+  /** Pulse a person's office in the tower, e.g. after a search. */
+  pulseOffice(roomId: string, floorIndex: number | null) {
+    if (!this.tower) return;
+    this.tower.pulse(roomId);
+    if (floorIndex !== null) this.tower.tintFloor(floorIndex);
+    this.tower.focusFloor(floorIndex);
   }
 
   private roomAtPosition(x: number, z: number): OfficeRoom | null {
@@ -540,10 +658,16 @@ export class OfficeEngine {
   }
 
   teleportToRoom(roomId: string, immediate = false) {
-    const room = ROOM_BY_ID[roomId];
+    const room =
+      this.allRooms.find((item) => item.id === roomId) ?? ROOM_BY_ID[roomId];
     if (!room || room.locked) {
       this.callbacks.onInvalidTarget();
       return;
+    }
+    // The room may live on another storey; swapping floors rebuilds the 3D
+    // interior before the player is placed in it.
+    if ((room.floorIndex ?? 0) !== this.activeFloor) {
+      this.setActiveFloor(room.floorIndex ?? 0);
     }
     this.playerPosition.set(room.spawn.x, 0, room.spawn.z);
     this.playerYaw = room.id === "reception" ? Math.PI : Math.PI;
@@ -607,6 +731,10 @@ export class OfficeEngine {
     );
     this.renderer.domElement.removeEventListener("wheel", this.boundWheel);
 
+    this.tower?.dispose();
+    if (this.tower) this.scene.remove(this.tower.group);
+    this.tower = null;
+
     disposeObject(this.scene);
     this.renderer.dispose();
     if (this.renderer.domElement.parentElement === this.container) {
@@ -618,6 +746,15 @@ export class OfficeEngine {
 
   private build() {
     this.addLights();
+    this.buildFloorContent();
+    this.addAgents();
+    this.addZoe();
+    this.addPlayer();
+    this.refreshSelection();
+  }
+
+  /** Everything that belongs to a single storey. */
+  private buildFloorContent() {
     this.addGround();
     this.addShell();
     this.addInteriorWalls();
@@ -625,9 +762,33 @@ export class OfficeEngine {
     this.addDoorFrames();
     this.addRoomLabels();
     this.addStaticFurniture();
-    this.addAgents();
-    this.addZoe();
-    this.addPlayer();
+  }
+
+  /**
+   * Only the floor the user stands on exists in 3D, so switching floors throws
+   * the storey away and builds the next one from its own rooms.
+   */
+  private rebuildFloorContent() {
+    for (const group of [
+      this.buildingGroup,
+      this.staticGroup,
+      this.furnitureGroup,
+    ]) {
+      for (const child of [...group.children]) {
+        group.remove(child);
+        disposeObject(child);
+      }
+    }
+
+    this.colliders = [];
+    this.wallColliders = [];
+    this.staticColliders = [];
+    this.furnitureColliders = [];
+    this.furnitureMeshes.clear();
+    this.marker = null;
+    this.selectionHelper = null;
+
+    this.buildFloorContent();
     this.refreshSelection();
   }
 
@@ -2720,6 +2881,24 @@ export class OfficeEngine {
   }
 
   private onPointerMove(event: PointerEvent) {
+    if (this.view === "tower") {
+      if (!this.pointerDown) {
+        this.updatePointer(event);
+        const office = this.tower?.pick(this.pointerNdc, this.camera) ?? null;
+        this.tower?.setHovered(office?.roomId ?? null);
+        this.callbacks.onTowerHover?.(office);
+        return;
+      }
+      const moveX = event.clientX - this.pointerStart.x;
+      const moveY = event.clientY - this.pointerStart.y;
+      if (Math.abs(moveX) + Math.abs(moveY) > 5) this.pointerDragged = true;
+      if (this.pointerDragged) {
+        this.cameraYaw -= moveX * 0.006;
+        this.pointerStart = { x: event.clientX, y: event.clientY };
+      }
+      return;
+    }
+
     if (!this.pointerDown) {
       if (
         this.editState.active &&
@@ -2751,6 +2930,17 @@ export class OfficeEngine {
     this.pointerDragged = false;
     if (wasDrag) return;
     this.updatePointer(event);
+
+    if (this.view === "tower") {
+      const office = this.tower?.pick(this.pointerNdc, this.camera) ?? null;
+      if (office) {
+        this.callbacks.onTowerPick?.({
+          roomId: office.roomId,
+          floorIndex: office.floorIndex,
+        });
+      }
+      return;
+    }
 
     if (this.editState.active) {
       this.handleEditClick(event);
@@ -3083,6 +3273,15 @@ export class OfficeEngine {
     const elapsed = this.clock.elapsedTime;
     this.cinemaTime += dt;
 
+    // The tower is the same scene seen from outside: the floor and its people
+    // are hidden, so only the tower animates.
+    if (this.view === "tower") {
+      this.tower?.update(elapsed);
+      this.updateTowerCamera(dt);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
     this.updatePlayer(dt, elapsed);
     this.updateAgents(dt, elapsed);
     this.updateZoe(elapsed);
@@ -3269,6 +3468,29 @@ export class OfficeEngine {
         rig.bubble.sprite.position.y = 2.75 + Math.sin(now * 0.002) * 0.03;
       }
     }
+  }
+
+  /** Frame the whole tower, or the storey a search or lift is focused on. */
+  private updateTowerCamera(dt: number) {
+    const tower = this.tower;
+    if (!tower) return;
+
+    const targetY = tower.focusY;
+    const height = Math.max(tower.height, 6);
+    const distance = height * 0.62 + 15;
+    const desired = new THREE.Vector3(
+      Math.sin(this.cameraYaw) * distance,
+      targetY + height * 0.12,
+      Math.cos(this.cameraYaw) * distance
+    );
+
+    this.cameraPosition.lerp(desired, Math.min(dt * 3, 1));
+    this.cameraTarget.lerp(
+      new THREE.Vector3(0, targetY, 0),
+      Math.min(dt * 3, 1)
+    );
+    this.camera.position.copy(this.cameraPosition);
+    this.camera.lookAt(this.cameraTarget);
   }
 
   private updateCamera(dt: number) {

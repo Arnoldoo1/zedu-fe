@@ -14,6 +14,8 @@ import {
   RoomDirectory,
 } from "./Panels";
 import ZoeDialog from "./ZoeDialog";
+import { TowerView } from "./TowerView";
+import type { TowerOffice } from "./engine/tower-scene";
 import { Onboarding, TourOverlay, type TourStep } from "./Onboarding";
 import {
   CATALOG_BY_ID,
@@ -234,6 +236,11 @@ export default function OfficeDemo({
   const [presence, setPresence] = useState<PresencePoint[]>(initialPresence);
   const [nearZoe, setNearZoe] = useState(false);
 
+  const [towerOpen, setTowerOpen] = useState(false);
+  const [activeFloor, setActiveFloor] = useState(0);
+  const [towerHover, setTowerHover] = useState<TowerOffice | null>(null);
+  const [liftTarget, setLiftTarget] = useState<number | null>(null);
+
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [mapOpen, setMapOpen] = useState(true);
   const [chatOpen, setChatOpen] = useState(false);
@@ -284,6 +291,27 @@ export default function OfficeDemo({
         ) ?? null)
       : null;
   const onlineCount = presence.length + 1;
+
+  // The tower shows the people, not the rooms: an office is lit while its
+  // owner is inside it, and the search only ever matches people.
+  const towerOffices = useMemo<TowerOffice[]>(() => {
+    const byRoom = new Map(presence.map((point) => [point.roomId, point]));
+    return rooms
+      .filter((room) => room.kind === "personal" || room.kind === "channel")
+      .map((room) => {
+        const personal = room.kind === "personal";
+        const here = personal ? byRoom.get(room.id) : undefined;
+        return {
+          roomId: room.id,
+          floorIndex: room.floorIndex ?? 0,
+          name: room.name,
+          kind: room.kind,
+          occupantName: here ? room.name : undefined,
+          status: here?.status,
+          tint: room.accent,
+        };
+      });
+  }, [rooms, presence]);
   const isShared = Boolean(currentRoom && currentRoom.kind !== "personal");
   const canEdit = Boolean(
     currentRoom &&
@@ -385,6 +413,9 @@ export default function OfficeDemo({
           onInvalidTarget: () => handlersRef.current?.onInvalidTarget(),
           onGhostState: (valid, reason) =>
             handlersRef.current?.onGhostState?.(valid, reason),
+          onTowerPick: (office) => handlersRef.current?.onTowerPick?.(office),
+          onTowerHover: (office) => handlersRef.current?.onTowerHover?.(office),
+          onFloorChange: (floorIndex) => setActiveFloor(floorIndex),
         },
         {
           isMobile: mobile,
@@ -429,6 +460,12 @@ export default function OfficeDemo({
       engineRef.current?.clearDemoAgents();
     }
   }, [rooms, source]);
+
+  // Keep the tower fed with the live directory: the storeys from the backend
+  // and who is sitting in each office right now.
+  useEffect(() => {
+    engineRef.current?.setTower(source.floors ?? [], towerOffices);
+  }, [source.floors, towerOffices]);
 
   useEffect(() => {
     engineRef.current?.setAvatar(avatarDraft);
@@ -747,6 +784,74 @@ export default function OfficeDemo({
     }
   }
 
+  // ---------------------------------------------------------------- the tower
+
+  function openTower() {
+    const engine = engineRef.current;
+    if (!engine) return;
+    setActiveFloor(engine.getActiveFloor());
+    engine.setView("tower");
+    setTowerOpen(true);
+    setMapOpen(false);
+    setDirectoryOpen(false);
+    setChatOpen(false);
+  }
+
+  function closeTower() {
+    engineRef.current?.setView("floor");
+    setTowerOpen(false);
+    setTowerHover(null);
+    setLiftTarget(null);
+  }
+
+  function selectFloor(floorIndex: number) {
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (floorIndex === engine.getActiveFloor()) {
+      closeTower();
+      return;
+    }
+
+    // The lift ride covers the moment the storey is rebuilt in 3D.
+    setLiftTarget(floorIndex);
+    const target =
+      rooms.find(
+        (room) => (room.floorIndex ?? 0) === floorIndex && room.kind !== "area"
+      ) ?? rooms.find((room) => (room.floorIndex ?? 0) === floorIndex);
+
+    schedule(() => {
+      if (target) {
+        engine.setView("floor");
+        engine.focusRoom(target.id);
+        setRoomId(target.id);
+      }
+      setActiveFloor(floorIndex);
+      setTowerOpen(false);
+      setTowerHover(null);
+      setLiftTarget(null);
+    }, 850);
+  }
+
+  function pickTowerPerson(office: TowerOffice) {
+    const engine = engineRef.current;
+    if (!engine) return;
+
+    // Light the office first, so the tower shows where the person is before
+    // the camera dives into their floor.
+    engine.pulseOffice(office.roomId, office.floorIndex);
+    setTowerHover(office);
+
+    schedule(() => {
+      engine.setView("floor");
+      engine.focusRoom(office.roomId);
+      setRoomId(office.roomId);
+      setActiveFloor(office.floorIndex);
+      setTowerOpen(false);
+      setTowerHover(null);
+      setChatOpen(true);
+    }, 750);
+  }
+
   handlersRef.current = {
     onReady: () => setReady(true),
     onError: (message) => {
@@ -775,6 +880,17 @@ export default function OfficeDemo({
       lastInvalidRef.current = now;
       showInfo("Can't walk there", "Try a clear path or a doorway.");
     },
+    onTowerPick: ({ roomId: picked, floorIndex }) => {
+      if (!rooms.some((room) => room.id === picked)) return;
+      engineRef.current?.setView("floor");
+      engineRef.current?.focusRoom(picked);
+      setRoomId(picked);
+      setActiveFloor(floorIndex);
+      setTowerOpen(false);
+      setTowerHover(null);
+      setChatOpen(true);
+    },
+    onTowerHover: (office) => setTowerHover(office),
   };
 
   function recordHistory(roomKey: string) {
@@ -1455,6 +1571,29 @@ export default function OfficeDemo({
             onNavigate={navigateToRoom}
             onInteract={openZoe}
           />
+
+          {!towerOpen && (
+            <button
+              type="button"
+              onClick={openTower}
+              className="absolute right-4 top-24 z-20 rounded-xl border border-violet-400/25 bg-[#0b0f1c]/90 px-3 py-2 text-xs font-medium text-violet-100/90 shadow-lg backdrop-blur transition hover:border-violet-300/50 hover:bg-violet-500/20"
+            >
+              The tower
+            </button>
+          )}
+
+          {towerOpen && (
+            <TowerView
+              floors={source.floors ?? []}
+              offices={towerOffices}
+              currentFloor={activeFloor}
+              liftTarget={liftTarget}
+              hovered={towerHover}
+              onSelectFloor={selectFloor}
+              onClose={closeTower}
+              onPickPerson={pickTowerPerson}
+            />
+          )}
 
           <RoomDirectory
             open={directoryOpen}
