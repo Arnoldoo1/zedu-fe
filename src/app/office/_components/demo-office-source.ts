@@ -24,6 +24,32 @@ const KEY_AVATAR = "office-demo-avatar-v1";
 /** The demo lives entirely in the browser: seeded data plus localStorage. */
 export const demoSource: OfficeSource = {
   mode: "demo",
+  floors: [
+    {
+      index: 0,
+      kind: "general",
+      name: "General",
+      capacity: 0,
+      members: 0,
+      hasPortal: false,
+    },
+    {
+      index: 1,
+      kind: "member",
+      name: "Floor 1",
+      capacity: 40,
+      members: 2,
+      hasPortal: true,
+    },
+    {
+      index: 2,
+      kind: "member",
+      name: "Floor 2",
+      capacity: 40,
+      members: 1,
+      hasPortal: true,
+    },
+  ],
   rooms: ROOMS as unknown as OfficeRoom[],
   initialLayouts: {},
   initialMessages: {},
