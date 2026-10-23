@@ -160,6 +160,7 @@ export default function ChannelsTab() {
           </div>
           <input
             type="text"
+            aria-label="Search for channels"
             placeholder="Search for channels"
             className="w-full pl-10 pr-4 py-1.5 border border-gray-300 dark:border-white/15 rounded bg-white dark:bg-[#222529] text-[#1d1c1d] dark:text-zinc-100 placeholder:text-gray-400 dark:placeholder:text-zinc-500 focus:border-[#1264a3] focus:ring-1 focus:ring-blue-100 dark:focus:ring-blue-900/40 focus:outline-none text-[15px]"
             value={searchInput}
@@ -172,7 +173,10 @@ export default function ChannelsTab() {
       {showBanner && (
         <div className="relative bg-[#e8f5fa] dark:bg-[#1A3F66]/40 rounded-lg p-4 md:p-8 mb-6 border border-[#c5e5f3] dark:border-[#1A3F66]">
           <button
+            type="button"
             onClick={() => setShowBanner(false)}
+            aria-label="Dismiss banner"
+            title="Dismiss"
             className="absolute top-4 right-4 text-gray-500 dark:text-zinc-400 hover:text-black dark:hover:text-zinc-100 transition-colors"
           >
             <X size={20} />
