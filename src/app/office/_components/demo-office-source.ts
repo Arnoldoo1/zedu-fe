@@ -4,6 +4,7 @@ import {
   CHAT_SEEDS,
   DEFAULT_AVATAR,
   DEMO_LAYOUTS,
+  DEMO_USERS,
   ROOMS,
   zoeAnswer,
   type FurnitureItem,
@@ -11,20 +12,101 @@ import {
 import type {
   OfficeAvatarConfig,
   OfficeChatMessage,
+  OfficeFloor,
   OfficeFurnitureItem,
   OfficeOccupant,
+  OfficePresenceStatus,
   OfficeRoom,
   OfficeSource,
   OfficeZoeContext,
 } from "~/types/office";
+import type { TowerOffice } from "./engine/tower-scene";
 
 const KEY_LAYOUTS = "office-demo-layouts-v1";
 const KEY_AVATAR = "office-demo-avatar-v1";
 
-/** The demo lives entirely in the browser: seeded data plus localStorage. */
-export const demoSource: OfficeSource = {
-  mode: "demo",
-  floors: [
+/**
+ * The demo is the full building, not a sample of it: ten storeys, and every
+ * member floor filled to the same forty-office capacity the live API uses.
+ * The three rooms the demo can be walked through keep their real ids; the
+ * rest is the directory that makes the tower look and search like a company.
+ */
+const DEMO_STOREYS = 9;
+const DEMO_CAPACITY = 40;
+
+const DEMO_FIRST_NAMES = [
+  "Ngozi",
+  "Emeka",
+  "Fatima",
+  "Chidi",
+  "Amara",
+  "Tobi",
+  "Zainab",
+  "Kelechi",
+  "Ifeoma",
+  "Damilola",
+  "Bisi",
+  "Yusuf",
+  "Aisha",
+  "Nnamdi",
+  "Sade",
+  "Bayo",
+  "Chioma",
+  "Ibrahim",
+  "Temi",
+  "Obi",
+];
+
+const DEMO_LAST_NAMES = [
+  "Adeyemi",
+  "Okafor",
+  "Bello",
+  "Eze",
+  "Lawal",
+  "Mensah",
+  "Nwosu",
+  "Balogun",
+  "Ojo",
+  "Danjuma",
+  "Chukwu",
+  "Adeleke",
+  "Oduya",
+  "Abdullahi",
+  "Osei",
+  "Ibe",
+  "Oni",
+  "Ekpo",
+  "Sani",
+  "Umeh",
+];
+
+const DEMO_STATUSES: OfficePresenceStatus[] = [
+  "online",
+  "online",
+  "idle",
+  "online",
+  "away",
+  "call",
+  "online",
+  "dnd",
+];
+
+/** The tints the directory gives the people who fill the upper storeys. */
+const DEMO_TINTS = [
+  "#f472b6",
+  "#34d399",
+  "#f59e0b",
+  "#60a5fa",
+  "#22d3ee",
+  "#a78bfa",
+  "#fb7185",
+  "#4ade80",
+  "#38bdf8",
+  "#e879f9",
+];
+
+export function demoTowerFloors(): OfficeFloor[] {
+  return [
     {
       index: 0,
       kind: "general",
@@ -33,23 +115,101 @@ export const demoSource: OfficeSource = {
       members: 0,
       hasPortal: false,
     },
-    {
-      index: 1,
-      kind: "member",
-      name: "Floor 1",
-      capacity: 40,
-      members: 2,
+    ...Array.from({ length: DEMO_STOREYS }, (_, offset) => ({
+      index: offset + 1,
+      kind: "member" as const,
+      name: `Floor ${offset + 1}`,
+      capacity: DEMO_CAPACITY,
+      members: DEMO_CAPACITY,
       hasPortal: true,
-    },
-    {
-      index: 2,
-      kind: "member",
-      name: "Floor 2",
-      capacity: 40,
-      members: 1,
-      hasPortal: true,
-    },
-  ],
+    })),
+  ];
+}
+
+function fillerName(seed: number): string {
+  const first = DEMO_FIRST_NAMES[seed % DEMO_FIRST_NAMES.length];
+  const last =
+    DEMO_LAST_NAMES[
+      Math.floor(seed / DEMO_FIRST_NAMES.length) % DEMO_LAST_NAMES.length
+    ];
+  return `${first} ${last}`;
+}
+
+/** The directory the tower draws, including the demo's filler storeys. */
+export function demoTowerOffices(
+  rooms: OfficeRoom[],
+  presence: ReadonlyArray<{
+    roomId: string;
+    status?: OfficePresenceStatus;
+    tint?: string;
+  }>
+): TowerOffice[] {
+  const byRoom = new Map(presence.map((point) => [point.roomId, point]));
+  // A private office is coloured by its owner's own avatar, the same tint that
+  // paints their body in the office view — not by the room's accent.
+  const ownerByRoom = new Map<string, string>();
+  for (const user of DEMO_USERS) {
+    if (user.isZoe || user.id === "you") continue;
+    if (!ownerByRoom.has(user.roomId)) {
+      ownerByRoom.set(user.roomId, user.avatar.tint);
+    }
+  }
+  const realRooms = rooms.filter(
+    (room) => room.kind === "personal" || room.kind === "channel"
+  );
+  const offices: TowerOffice[] = [];
+
+  for (const floor of demoTowerFloors()) {
+    const onFloor = realRooms.filter(
+      (room) => (room.floorIndex ?? 0) === floor.index
+    );
+    for (const room of onFloor) {
+      const here = room.kind === "personal" ? byRoom.get(room.id) : undefined;
+      const personal = room.kind === "personal";
+      offices.push({
+        roomId: room.id,
+        floorIndex: floor.index,
+        name: room.name,
+        kind: room.kind,
+        // A private office belongs to somebody whether or not they are in it.
+        occupantName: personal ? room.name : undefined,
+        present: Boolean(here),
+        status: here?.status ?? (personal ? "away" : undefined),
+        tint: here?.tint ?? ownerByRoom.get(room.id) ?? room.accent,
+      });
+    }
+
+    if (floor.kind !== "member") continue;
+
+    const personalOnFloor = onFloor.filter(
+      (room) => room.kind === "personal"
+    ).length;
+    const fillers = floor.capacity - personalOnFloor;
+    for (let slot = 0; slot < fillers; slot += 1) {
+      const seed = (floor.index - 1) * DEMO_CAPACITY + slot;
+      const person = fillerName(seed);
+      const occupied = (seed * 7 + 3) % 10 < 4;
+      offices.push({
+        roomId: `demo-office:${floor.index}:${slot}`,
+        floorIndex: floor.index,
+        name: person,
+        kind: "personal",
+        occupantName: person,
+        present: occupied,
+        status: occupied ? DEMO_STATUSES[seed % DEMO_STATUSES.length] : "away",
+        tint: DEMO_TINTS[seed % DEMO_TINTS.length],
+        interactive: false,
+      });
+    }
+  }
+
+  return offices;
+}
+
+/** The demo lives entirely in the browser: seeded data plus localStorage. */
+export const demoSource: OfficeSource = {
+  mode: "demo",
+  floors: demoTowerFloors(),
   rooms: ROOMS as unknown as OfficeRoom[],
   initialLayouts: {},
   initialMessages: {},
