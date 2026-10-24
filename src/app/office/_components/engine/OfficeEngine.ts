@@ -12,7 +12,6 @@ import {
   type OfficeRoom,
   type PresenceStatus,
   furnitureAabb,
-  roomAt,
   validatePlacement,
 } from "../office-data";
 import type { OfficeFloor, OfficeOccupant } from "~/types/office";
@@ -112,6 +111,15 @@ const WALK_BOUNDS = [
 ];
 
 const ZOE_POS = { x: 8.5, z: 3.2 };
+
+// The live building's footprint is derived from the rooms the server sends, so
+// the walking bounds follow the floor plan instead of the demo's two wings.
+const DEMO_PLAN = {
+  minX: 0,
+  maxX: BUILDING.maxX,
+  minZ: 0,
+  maxZ: BUILDING.maxZ,
+};
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -252,13 +260,18 @@ export class OfficeEngine {
   private rooms: OfficeRoom[] = ROOMS;
   private allRooms: OfficeRoom[] = ROOMS;
   private activeFloor = 0;
+  private planBounds = DEMO_PLAN;
+  private walkBounds: Collider[] = WALK_BOUNDS;
+  private zoePosition = { ...ZOE_POS };
   private view: "floor" | "tower" = "floor";
   private tower: TowerScene | null = null;
   private towerFloors: OfficeFloor[] = [];
   private towerOffices: TowerOffice[] = [];
+  private skyTexture: THREE.Texture | null = null;
 
   private agentRigs = new Map<string, AvatarRig>();
   private isLive = false;
+  private selfId = "you";
 
   /**
    * The building can run on the demo floor plan or on the rooms the office API
@@ -266,14 +279,121 @@ export class OfficeEngine {
    */
   setRooms(rooms: OfficeRoom[]) {
     if (!rooms.length) return;
+    const previous = this.rooms;
     this.allRooms = rooms;
     const next = this.roomsOnFloor(this.activeFloor);
-    const unchanged =
-      next.length === this.rooms.length &&
-      next.every((room, index) => room === this.rooms[index]);
-    if (unchanged) return;
     this.rooms = next;
-    this.rebuildFloorContent();
+    this.updatePlan();
+    this.syncZoe();
+    const unchanged =
+      next.length === previous.length &&
+      next.every((room, index) => room === previous[index]);
+    if (!unchanged) this.rebuildFloorContent();
+    this.ensureSpawn();
+  }
+
+  /**
+   * Derive the walkable footprint from the rooms on the floor that is being
+   * shown. Every storey has its own plan, so the bounds are recomputed when the
+   * user changes floor instead of being inherited from the general floor.
+   */
+  private updatePlan() {
+    if (!this.isLive) {
+      this.planBounds = DEMO_PLAN;
+      this.walkBounds = WALK_BOUNDS;
+      const cx = (DEMO_PLAN.minX + DEMO_PLAN.maxX) / 2;
+      const cz = (DEMO_PLAN.minZ + DEMO_PLAN.maxZ) / 2;
+      this.floorPlane.position.set(cx, 0, cz);
+      return;
+    }
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (const room of this.rooms) {
+      minX = Math.min(minX, room.bounds.x);
+      maxX = Math.max(maxX, room.bounds.x + room.bounds.w);
+      minZ = Math.min(minZ, room.bounds.z);
+      maxZ = Math.max(maxZ, room.bounds.z + room.bounds.d);
+    }
+    if (!Number.isFinite(minX)) return;
+
+    const pad = 1.4;
+    this.planBounds = {
+      minX: minX - pad,
+      maxX: maxX + pad,
+      minZ: minZ - pad,
+      maxZ: maxZ + pad,
+    };
+    this.walkBounds = [
+      {
+        minX: this.planBounds.minX + 0.5,
+        maxX: this.planBounds.maxX - 0.5,
+        minZ: this.planBounds.minZ + 0.5,
+        maxZ: this.planBounds.maxZ - 0.5,
+      },
+    ];
+    this.floorPlane.position.set(
+      (this.planBounds.minX + this.planBounds.maxX) / 2,
+      0,
+      (this.planBounds.minZ + this.planBounds.maxZ) / 2
+    );
+  }
+
+  private get planCenter() {
+    return {
+      x: (this.planBounds.minX + this.planBounds.maxX) / 2,
+      z: (this.planBounds.minZ + this.planBounds.maxZ) / 2,
+    };
+  }
+
+  private get planWidth() {
+    return this.planBounds.maxX - this.planBounds.minX;
+  }
+
+  private get planDepth() {
+    return this.planBounds.maxZ - this.planBounds.minZ;
+  }
+
+  /** Zoe stands behind reception, wherever the server put reception. */
+  private syncZoe() {
+    const room =
+      this.allRooms.find((item) => item.kind === "reception") ??
+      this.allRooms.find((item) => item.kind === "lobby");
+    if (!room) return;
+    this.zoePosition = {
+      x: room.bounds.x + room.bounds.w / 2,
+      z: room.bounds.z + Math.min(2.1, room.bounds.d * 0.32),
+    };
+    if (this.zoeRig) {
+      this.zoeRig.group.position.set(this.zoePosition.x, 0, this.zoePosition.z);
+      this.zoeRig.group.rotation.y = Math.PI;
+    }
+    const range = this.buildingGroup.getObjectByName("zoe-range");
+    if (range) {
+      range.position.set(this.zoePosition.x, 0.02, this.zoePosition.z);
+    }
+  }
+
+  /** The live layout can change under the player; never leave them in a wall. */
+  private ensureSpawn() {
+    if (!this.isLive) return;
+    if (!this.isBlocked(this.playerPosition.x, this.playerPosition.z, 0.34)) {
+      return;
+    }
+    const room =
+      this.rooms.find((item) => item.kind === "reception") ??
+      this.rooms.find((item) => item.kind === "lobby") ??
+      this.rooms.find((item) => item.kind !== "area") ??
+      this.rooms[0];
+    if (!room) return;
+    this.playerPosition.set(room.spawn.x, 0, room.spawn.z);
+    this.playerYaw = Math.PI;
+    this.path = [];
+    this.playerVelocity.set(0, 0);
+    this.cameraTarget.set(room.spawn.x, 1.25, room.spawn.z);
+    this.playerRig?.group.position.set(room.spawn.x, 0, room.spawn.z);
   }
 
   private roomsOnFloor(index: number): OfficeRoom[] {
@@ -298,6 +418,7 @@ export class OfficeEngine {
   setView(view: "floor" | "tower") {
     if (this.view === view) return;
     this.view = view;
+    this.applyBackdrop(view);
 
     const floorGroups = [
       this.buildingGroup,
@@ -327,11 +448,45 @@ export class OfficeEngine {
     this.cinematic = false;
   }
 
+  /**
+   * The tower is seen from the street, so it gets a daylight sky; the floor is
+   * an interior and keeps the dark ambience the rooms were lit for.
+   */
+  private applyBackdrop(view: "floor" | "tower") {
+    if (view === "tower") {
+      this.scene.background = this.skyTexture ?? this.createSkyTexture();
+      this.scene.fog = new THREE.Fog(0xd3e6f7, 90, 260);
+      return;
+    }
+    this.scene.background = new THREE.Color(0x080a13);
+    this.scene.fog = new THREE.Fog(0x080a13, 58, 120);
+  }
+
+  private createSkyTexture(): THREE.Texture {
+    const canvas = document.createElement("canvas");
+    canvas.width = 16;
+    canvas.height = 256;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      gradient.addColorStop(0, "#7fb2e0");
+      gradient.addColorStop(0.55, "#c7def4");
+      gradient.addColorStop(1, "#f2f8ff");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    this.skyTexture = texture;
+    return texture;
+  }
+
   /** Show a floor of the 3D interior, rebuilding only that floor's rooms. */
   setActiveFloor(index: number) {
     if (index === this.activeFloor) return;
     this.activeFloor = index;
     this.rooms = this.roomsOnFloor(index);
+    this.updatePlan();
     this.rebuildFloorContent();
     this.callbacks.onFloorChange?.(index);
   }
@@ -348,10 +503,7 @@ export class OfficeEngine {
       return;
     }
     if ((room.floorIndex ?? 0) !== this.activeFloor) {
-      this.activeFloor = room.floorIndex ?? 0;
-      this.rooms = this.roomsOnFloor(this.activeFloor);
-      this.rebuildFloorContent();
-      this.callbacks.onFloorChange?.(this.activeFloor);
+      this.setActiveFloor(room.floorIndex ?? 0);
     }
     this.playerPosition.set(room.spawn.x, 0, room.spawn.z);
     this.playerYaw = Math.PI;
@@ -370,8 +522,17 @@ export class OfficeEngine {
   pulseOffice(roomId: string, floorIndex: number | null) {
     if (!this.tower) return;
     this.tower.pulse(roomId);
-    if (floorIndex !== null) this.tower.tintFloor(floorIndex);
-    this.tower.focusFloor(floorIndex);
+    if (floorIndex !== null) this.tower.focusFloor(floorIndex);
+  }
+
+  /** Frame one storey of the tower, or the whole tower when null. */
+  focusTowerFloor(index: number | null) {
+    this.tower?.focusFloor(index);
+  }
+
+  /** Frame one office: the camera pans along the facade to reach it. */
+  focusTowerRoom(roomId: string | null) {
+    this.tower?.focusRoom(roomId);
   }
 
   private roomAtPosition(x: number, z: number): OfficeRoom | null {
@@ -388,6 +549,8 @@ export class OfficeEngine {
   private zoeRig: AvatarRig | null = null;
   private furnitureMeshes = new Map<string, THREE.Mesh>();
   private furnitureItems: FurnitureItem[] = [];
+  private labelSprites: THREE.Sprite[] = [];
+  private floorLights: THREE.PointLight[] = [];
   private selectedId: string | null = null;
   private selectionHelper: THREE.BoxHelper | null = null;
 
@@ -416,7 +579,7 @@ export class OfficeEngine {
   private raycaster = new THREE.Raycaster();
   private pointerNdc = new THREE.Vector2();
   private floorPlane = new THREE.Mesh(
-    new THREE.PlaneGeometry(120, 100),
+    new THREE.PlaneGeometry(400, 400),
     new THREE.MeshBasicMaterial({ visible: false })
   );
 
@@ -437,15 +600,35 @@ export class OfficeEngine {
       isLive?: boolean;
       avatar?: AvatarConfig;
       furniture?: FurnitureItem[];
+      /** Real rooms, known up front so the first frame is the real building. */
+      rooms?: OfficeRoom[];
+      /** The signed-in person, so presence never draws a second self. */
+      selfId?: string;
     }
   ) {
     this.container = container;
     this.callbacks = callbacks;
     this.isMobile = Boolean(options?.isMobile);
     this.isLive = Boolean(options?.isLive);
+    if (options?.selfId) this.selfId = options.selfId;
     // The engine opens on the cinematic orbit. Callers that drop the user
     // straight into the office pass false so control is never withheld.
     this.cinematic = options?.cinematic ?? true;
+
+    if (options?.rooms?.length) {
+      this.allRooms = options.rooms;
+      this.rooms = this.roomsOnFloor(0);
+      this.updatePlan();
+      this.syncZoe();
+      const entrance =
+        this.rooms.find((room) => room.kind === "reception") ??
+        this.rooms.find((room) => room.kind === "lobby");
+      if (entrance) {
+        this.playerPosition.set(entrance.spawn.x, 0, entrance.spawn.z);
+        this.cameraTarget.set(entrance.spawn.x, 1.25, entrance.spawn.z);
+        this.currentRoom = entrance;
+      }
+    }
 
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
@@ -480,7 +663,7 @@ export class OfficeEngine {
     this.camera.lookAt(this.cameraTarget);
 
     this.floorPlane.rotation.x = -Math.PI / 2;
-    this.floorPlane.position.set(28, 0, 18);
+    this.floorPlane.position.set(this.planCenter.x, 0, this.planCenter.z);
 
     this.scene.add(
       this.buildingGroup,
@@ -551,10 +734,33 @@ export class OfficeEngine {
   }
 
   setFurniture(items: FurnitureItem[]) {
+    this.furnitureItems = items;
+    this.renderFurniture();
+  }
+
+  /**
+   * Only the furniture of rooms on the floor being shown is drawn: offices on
+   * different member floors share the same coordinates.
+   */
+  private visibleFurniture(): FurnitureItem[] {
+    if (!this.isLive) return this.furnitureItems;
+    return this.furnitureItems.filter((item) => {
+      const room = this.allRooms.find(
+        (candidate) =>
+          (candidate.floorIndex ?? 0) === this.activeFloor &&
+          item.x >= candidate.bounds.x &&
+          item.x <= candidate.bounds.x + candidate.bounds.w &&
+          item.z >= candidate.bounds.z &&
+          item.z <= candidate.bounds.z + candidate.bounds.d
+      );
+      return Boolean(room);
+    });
+  }
+
+  private renderFurniture() {
     this.clearFurniture();
     this.furnitureColliders = [];
-    this.furnitureItems = items;
-    for (const item of items) {
+    for (const item of this.visibleFurniture()) {
       const mesh = this.buildFurniture(item);
       if (!mesh) continue;
       mesh.userData.furnitureId = item.id;
@@ -577,7 +783,7 @@ export class OfficeEngine {
 
     // Create or update rigs for occupants that are present.
     for (const occ of occupants) {
-      if (occ.userId === "you") continue; // self is rendered separately
+      if (occ.userId === this.selfId || occ.userId === "you") continue; // self is rendered separately
 
       let rig = this.agentRigs.get(occ.userId);
       if (!rig) {
@@ -658,8 +864,7 @@ export class OfficeEngine {
   }
 
   teleportToRoom(roomId: string, immediate = false) {
-    const room =
-      this.allRooms.find((item) => item.id === roomId) ?? ROOM_BY_ID[roomId];
+    const room = this.allRooms.find((item) => item.id === roomId);
     if (!room || room.locked) {
       this.callbacks.onInvalidTarget();
       return;
@@ -736,6 +941,8 @@ export class OfficeEngine {
     this.tower = null;
 
     disposeObject(this.scene);
+    this.skyTexture?.dispose();
+    this.skyTexture = null;
     this.renderer.dispose();
     if (this.renderer.domElement.parentElement === this.container) {
       this.container.removeChild(this.renderer.domElement);
@@ -755,6 +962,12 @@ export class OfficeEngine {
 
   /** Everything that belongs to a single storey. */
   private buildFloorContent() {
+    // The demo is a hand-built floor plan. The live building is whatever the
+    // organisation actually has, so it is generated from the room list.
+    if (this.isLive) {
+      this.buildLiveFloorContent();
+      return;
+    }
     this.addGround();
     this.addShell();
     this.addInteriorWalls();
@@ -785,10 +998,31 @@ export class OfficeEngine {
     this.staticColliders = [];
     this.furnitureColliders = [];
     this.furnitureMeshes.clear();
+    this.labelSprites = [];
     this.marker = null;
     this.selectionHelper = null;
 
+    if (this.isLive) {
+      this.syncZoe();
+      // Zoe is the receptionist: she is only rendered on the general floor.
+      if (this.zoeRig) {
+        this.zoeRig.group.visible = this.activeFloor === 0;
+      }
+    }
     this.buildFloorContent();
+    // The demo ring belongs to the ground floor and is created with Zoe; a
+    // rebuild throws it away, so put it back on the floor that owns her.
+    if (
+      !this.isLive &&
+      this.zoeRig &&
+      this.activeFloor === 0 &&
+      !this.buildingGroup.getObjectByName("zoe-range")
+    ) {
+      this.addZoeRange();
+    }
+    // Rebuilding the storey also threw away the furniture meshes; put the
+    // layouts for this floor back before the next frame.
+    this.renderFurniture();
     this.refreshSelection();
   }
 
@@ -808,22 +1042,37 @@ export class OfficeEngine {
     const hemi = new THREE.HemisphereLight(0xdbe4ff, 0x1a1430, 1.7);
     this.scene.add(hemi);
 
+    // Every storey has its own footprint, so aim the sun at whatever floor is
+    // being built instead of the demo's fixed corner.
+    const center = this.isLive ? this.planCenter : { x: 28, z: 18 };
+    const reach = this.isLive
+      ? Math.max(this.planWidth, this.planDepth) / 2 + 12
+      : 44;
+
     const sun = new THREE.DirectionalLight(0xfff1d6, 2.4);
-    sun.position.set(34, 46, 12);
+    // The tower presents its south facade to the camera, so the key light has
+    // to come from +Z as well or every office cell is back-lit.
+    sun.position.set(center.x + 22, 46, center.z + 34);
+    sun.target.position.set(center.x, 0, center.z);
+    this.scene.add(sun.target);
     sun.castShadow = !this.isMobile;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -44;
-    sun.shadow.camera.right = 44;
-    sun.shadow.camera.top = 44;
-    sun.shadow.camera.bottom = -44;
+    sun.shadow.camera.left = -reach;
+    sun.shadow.camera.right = reach;
+    sun.shadow.camera.top = reach;
+    sun.shadow.camera.bottom = -reach;
     sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 120;
+    sun.shadow.camera.far = 160;
     sun.shadow.bias = -0.0004;
     this.scene.add(sun);
 
     const fill = new THREE.DirectionalLight(0x8b5cf6, 0.55);
-    fill.position.set(-20, 18, 30);
+    fill.position.set(center.x - 24, 18, center.z + 22);
+    fill.target.position.set(center.x, 0, center.z);
+    this.scene.add(fill.target);
     this.scene.add(fill);
+
+    if (this.isLive) return;
 
     const points: Array<[number, number, number, number, number, number]> = [
       [8.5, 2.4, 5, 0x8b5cf6, 16, 18],
@@ -1155,35 +1404,41 @@ export class OfficeEngine {
   }
 
   private addRoomLabels() {
+    // Signs sit inside their rooms, not in the corridors. A sign in the
+    // corridor ends up between the camera and the player at spawn and fills
+    // the bottom of the screen.
     const labels: Array<[number, number, string, string]> = [
-      [9, 13, "RECEPTION", "#a78bfa"],
-      [23.5, 13, "MEETING A", "#22d3ee"],
-      [36.5, 13, "MEETING B", "#38bdf8"],
-      [9, 14, "LOUNGE", "#f59e0b"],
-      [6.5, 26, "#GENERAL", "#60a5fa"],
-      [17.5, 26, "#DESIGN", "#f472b6"],
-      [28.5, 26, "#DEV", "#34d399"],
-      [38.5, 26, "#MARKETING", "#fbbf24"],
-      [49, 12.5, "ADA", "#f472b6"],
-      [49, 20.5, "TUNDE", "#34d399"],
-      [49, 29.5, "YOUR OFFICE", "#a78bfa"],
+      [9, 6.5, "RECEPTION", "#a78bfa"],
+      [23.5, 7, "MEETING A", "#22d3ee"],
+      [36.5, 7, "MEETING B", "#38bdf8"],
+      [9, 19, "LOUNGE", "#f59e0b"],
+      [6.5, 31, "#GENERAL", "#60a5fa"],
+      [17.5, 31, "#DESIGN", "#f472b6"],
+      [28.5, 31, "#DEV", "#34d399"],
+      [38.5, 31, "#MARKETING", "#fbbf24"],
+      [52.4, 12.6, "ADA", "#f472b6"],
+      [52.4, 20.6, "TUNDE", "#34d399"],
+      [52.4, 29.6, "YOUR OFFICE", "#a78bfa"],
     ];
     for (const [x, z, text, color] of labels) {
       const sprite = this.makeLabelSprite(text, color, 0.86);
       sprite.position.set(x, 2.5, z);
       sprite.scale.set(text.length > 9 ? 3.4 : 2.6, 0.62, 1);
       this.buildingGroup.add(sprite);
+      this.labelSprites.push(sprite);
     }
 
     const zedu = this.makeLabelSprite("ZEDU", "#a78bfa", 1.2);
     zedu.position.set(9, 2.45, 1.82);
     zedu.scale.set(2.2, 0.8, 1);
     this.buildingGroup.add(zedu);
+    this.labelSprites.push(zedu);
 
     const office = this.makeLabelSprite("THE OFFICE", "#e5e7eb", 0.8);
     office.position.set(9, 2.0, 1.82);
     office.scale.set(2.6, 0.5, 1);
     this.buildingGroup.add(office);
+    this.labelSprites.push(office);
   }
 
   private addStaticFurniture() {
@@ -1274,7 +1529,323 @@ export class OfficeEngine {
     this.rebuildColliders();
   }
 
+  // ------------------------------------------------------ live floor builder
+
+  /**
+   * The live floor is generated from the rooms the organisation actually has:
+   * floor pads, low partitions with a doorway, a furniture kit per room kind
+   * and a floor decal. Nothing here assumes the demo's two-wing plan.
+   */
+  private buildLiveFloorContent() {
+    this.addLiveGround();
+    this.addLiveRoomPads();
+    this.addLiveWalls();
+    this.addLiveFurniture();
+    this.addLiveRoomLabels();
+    if (this.activeFloor === 0) this.addZoeRange();
+    this.rebuildColliders();
+    this.refreshFloorLights();
+  }
+
+  /** Warm accent lights follow the rooms on the storey that is being shown. */
+  private refreshFloorLights() {
+    for (const light of this.floorLights) {
+      this.scene.remove(light);
+      light.dispose();
+    }
+    this.floorLights = [];
+    if (!this.isLive) return;
+    for (const room of this.rooms.slice(0, 8)) {
+      const light = new THREE.PointLight(
+        new THREE.Color(room.accent).getHex(),
+        6,
+        14,
+        2
+      );
+      light.position.set(
+        room.bounds.x + room.bounds.w / 2,
+        2.4,
+        room.bounds.z + room.bounds.d / 2
+      );
+      this.scene.add(light);
+      this.floorLights.push(light);
+    }
+  }
+
+  private addLiveGround() {
+    const { x: cx, z: cz } = this.planCenter;
+    const span = Math.max(this.planWidth, this.planDepth);
+    const grid = new THREE.GridHelper(
+      Math.ceil(span) + 16,
+      Math.ceil(span) + 16,
+      0x2a2f52,
+      0x171b2e
+    );
+    grid.position.set(cx, -0.12, cz);
+    (grid.material as THREE.Material).transparent = true;
+    (grid.material as THREE.Material).opacity = 0.4;
+    this.staticGroup.add(grid);
+
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(this.planWidth + 30, this.planDepth + 30),
+      new THREE.MeshStandardMaterial({
+        color: 0x090b15,
+        roughness: 1,
+        metalness: 0,
+      })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.set(cx, -0.16, cz);
+    ground.receiveShadow = true;
+    this.staticGroup.add(ground);
+
+    const plinth = new THREE.Mesh(
+      new THREE.BoxGeometry(this.planWidth + 6, 0.22, this.planDepth + 6),
+      new THREE.MeshStandardMaterial({ color: 0x111423, roughness: 0.85 })
+    );
+    plinth.position.set(cx, -0.11, cz);
+    plinth.receiveShadow = true;
+    this.staticGroup.add(plinth);
+  }
+
+  private addLiveRoomPads() {
+    for (const room of this.rooms) {
+      const b = room.bounds;
+      const cx = b.x + b.w / 2;
+      const cz = b.z + b.d / 2;
+
+      const texture = makeGridTexture(room.floor, "#ffffff");
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(Math.max(1, b.w / 2), Math.max(1, b.d / 2));
+      const floor = new THREE.Mesh(
+        new THREE.BoxGeometry(b.w, 0.1, b.d),
+        new THREE.MeshStandardMaterial({
+          map: texture,
+          roughness: 0.9,
+          metalness: 0.03,
+          emissive: new THREE.Color(room.accent),
+          emissiveIntensity: 0.05,
+        })
+      );
+      floor.position.set(cx, 0.05, cz);
+      floor.receiveShadow = true;
+      this.buildingGroup.add(floor);
+
+      const edge = new THREE.Mesh(
+        new THREE.BoxGeometry(b.w + 0.08, 0.02, b.d + 0.08),
+        new THREE.MeshBasicMaterial({
+          color: new THREE.Color(room.accent),
+          transparent: true,
+          opacity: 0.45,
+        })
+      );
+      edge.position.set(cx, 0.005, cz);
+      this.buildingGroup.add(edge);
+    }
+  }
+
+  private addLiveWalls() {
+    const wall = new THREE.MeshStandardMaterial({
+      color: 0x3a4260,
+      roughness: 0.82,
+      metalness: 0.08,
+    });
+    const height = 1.15;
+    const thickness = 0.14;
+
+    for (const room of this.rooms) {
+      const b = room.bounds;
+      const cx = b.x + b.w / 2;
+      const cz = b.z + b.d / 2;
+      // Every room opens onto the corridor on its south edge.
+      const doorway = Math.min(1.7, Math.max(1, b.w * 0.42));
+      const segment = (b.w - doorway) / 2;
+
+      this.addWallBox(cx, b.z, b.w, thickness, wall, height);
+      this.addWallBox(b.x, cz, thickness, b.d, wall, height);
+      this.addWallBox(b.x + b.w, cz, thickness, b.d, wall, height);
+      if (segment > 0.08) {
+        this.addWallBox(
+          b.x + segment / 2,
+          b.z + b.d,
+          segment,
+          thickness,
+          wall,
+          height
+        );
+        this.addWallBox(
+          b.x + b.w - segment / 2,
+          b.z + b.d,
+          segment,
+          thickness,
+          wall,
+          height
+        );
+      }
+
+      const accent = new THREE.Mesh(
+        new THREE.BoxGeometry(Math.max(0.5, b.w - 0.4), 0.045, 0.055),
+        new THREE.MeshStandardMaterial({
+          color: new THREE.Color(room.accent),
+          emissive: new THREE.Color(room.accent),
+          emissiveIntensity: 1.1,
+          roughness: 0.4,
+        })
+      );
+      accent.position.set(cx, height + 0.03, b.z + thickness / 2);
+      this.buildingGroup.add(accent);
+    }
+  }
+
+  private addLiveFurniture() {
+    for (const room of this.rooms) {
+      const b = room.bounds;
+      const cx = b.x + b.w / 2;
+      const cz = b.z + b.d / 2;
+
+      switch (room.kind) {
+        case "reception": {
+          this.addRug(
+            cx,
+            cz + 0.4,
+            Math.min(b.w - 1.2, 6),
+            Math.min(b.d - 1.2, 4),
+            0x3a2c5f
+          );
+          this.addReceptionDesk(cx, b.z + Math.min(3.2, b.d * 0.5));
+          this.addPlant(b.x + 0.9, b.z + 0.9);
+          this.addPlant(b.x + b.w - 0.9, b.z + 0.9);
+          break;
+        }
+        case "lobby": {
+          this.addRug(
+            cx,
+            cz,
+            Math.min(b.w - 1.2, 6),
+            Math.min(b.d - 1.2, 3.6),
+            0x24304f
+          );
+          this.addCoffeeTable(cx, cz);
+          this.addPlant(b.x + 0.9, b.z + 0.9);
+          break;
+        }
+        case "lounge": {
+          this.addRug(
+            cx,
+            cz,
+            Math.min(b.w - 1.2, 9),
+            Math.min(b.d - 1.2, 5),
+            0x4a3320
+          );
+          if (b.w >= 6) {
+            this.addSofa(b.x + 1.4, cz, 90, 0x5b4a7a);
+            this.addSofa(b.x + b.w - 1.4, cz, 270, 0x5b4a7a);
+          }
+          this.addCoffeeTable(cx, cz);
+          this.addPlant(b.x + 0.9, b.z + 0.9);
+          break;
+        }
+        case "meeting": {
+          this.addMeetingTable(cx, cz);
+          if (b.d >= 5) this.addScreen(cx, b.z + 0.5, 0);
+          break;
+        }
+        case "focus": {
+          this.addFocusDesk(cx, cz + 0.2);
+          break;
+        }
+        case "channel": {
+          if (b.w >= 5.5 && b.d >= 4.5) {
+            this.addRug(
+              cx,
+              cz,
+              Math.min(b.w - 1.6, 7),
+              Math.min(b.d - 1.6, 4.4),
+              0x1e3550
+            );
+            this.addMeetingTable(cx, cz);
+          } else {
+            this.addFocusDesk(cx, cz);
+          }
+          this.addPlant(b.x + 0.8, b.z + 0.8);
+          break;
+        }
+        case "personal": {
+          this.addFocusDesk(cx, b.z + Math.min(1.9, b.d * 0.42));
+          if (b.w >= 3.2) {
+            this.addPlant(b.x + 0.7, b.z + b.d - 0.8);
+          }
+          break;
+        }
+        case "area": {
+          this.addRug(
+            cx,
+            cz,
+            Math.min(b.w - 1, 6),
+            Math.min(b.d - 1, 4),
+            0x1b2030
+          );
+          if (b.w >= 6) this.addSofa(b.x + 1.2, cz, 90, 0x4b5a8a);
+          this.addPlant(b.x + b.w - 0.8, b.z + 0.8);
+          break;
+        }
+      }
+    }
+  }
+
+  private addLiveRoomLabels() {
+    for (const room of this.rooms) {
+      const b = room.bounds;
+      const label =
+        room.name.length > 18 ? `${room.name.slice(0, 17)}\u2026` : room.name;
+      const texture = makeCanvasTexture(512, 160, (ctx) => {
+        ctx.clearRect(0, 0, 512, 160);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "800 54px Lato, Arial, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.globalAlpha = 0.92;
+        ctx.fillText(label, 256, 80);
+        ctx.globalAlpha = 0.55;
+        ctx.fillStyle = room.accent;
+        ctx.fillRect(186, 122, 140, 5);
+      });
+      const width = clamp(b.w * 0.82, 1.5, 4.8);
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(width, width * (160 / 512)),
+        new THREE.MeshBasicMaterial({
+          map: texture,
+          transparent: true,
+          opacity: 0.85,
+          depthWrite: false,
+        })
+      );
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(b.x + b.w / 2, 0.075, b.z + b.d * 0.62);
+      this.buildingGroup.add(mesh);
+    }
+  }
+
+  private addZoeRange() {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(1.8, 1.88, 64),
+      new THREE.MeshBasicMaterial({
+        color: 0xf4c46a,
+        transparent: true,
+        opacity: 0.45,
+        side: THREE.DoubleSide,
+      })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(this.zoePosition.x, 0.02, this.zoePosition.z);
+    ring.name = "zoe-range";
+    this.buildingGroup.add(ring);
+  }
   private addAgents() {
+    // The real building renders the real roster over presence; seeded
+    // teammates would stand in rooms their owners do not occupy.
+    if (this.isLive) return;
     for (const user of DEMO_USERS) {
       if (user.id === "you" || user.isZoe) continue;
       const rig = this.createAvatar(
@@ -1311,8 +1882,8 @@ export class OfficeEngine {
       true,
       false
     );
-    this.zoeRig.group.position.set(ZOE_POS.x, 0, ZOE_POS.z);
-    this.zoeRig.group.rotation.y = 0;
+    this.zoeRig.group.position.set(this.zoePosition.x, 0, this.zoePosition.z);
+    this.zoeRig.group.rotation.y = Math.PI;
     this.avatarGroup.add(this.zoeRig.group);
 
     const halo = new THREE.Mesh(
@@ -1342,19 +1913,7 @@ export class OfficeEngine {
     diamond.name = "zoe-diamond";
     this.zoeRig.group.add(diamond);
 
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(1.8, 1.88, 64),
-      new THREE.MeshBasicMaterial({
-        color: 0xf4c46a,
-        transparent: true,
-        opacity: 0.45,
-        side: THREE.DoubleSide,
-      })
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.set(ZOE_POS.x, 0.02, ZOE_POS.z);
-    ring.name = "zoe-range";
-    this.buildingGroup.add(ring);
+    this.addZoeRange();
   }
 
   private addPlayer() {
@@ -1415,7 +1974,7 @@ export class OfficeEngine {
   }
 
   private isBlocked(x: number, z: number, radius = 0.34): boolean {
-    const inside = WALK_BOUNDS.some(
+    const inside = this.walkBounds.some(
       (area) =>
         x >= area.minX + radius &&
         x <= area.maxX - radius &&
@@ -3103,20 +3662,20 @@ export class OfficeEngine {
     tz: number
   ): Array<{ x: number; z: number }> {
     const cell = 0.5;
-    const minX = 0;
-    const minZ = 0;
-    const cols = Math.ceil(56 / cell);
-    const rows = Math.ceil(36 / cell);
+    const minX = this.planBounds.minX;
+    const minZ = this.planBounds.minZ;
+    const cols = Math.ceil(this.planWidth / cell);
+    const rows = Math.ceil(this.planDepth / cell);
     const toCell = (x: number, z: number) => ({
-      cx: clamp(Math.round(x / cell), 0, cols - 1),
-      cz: clamp(Math.round(z / cell), 0, rows - 1),
+      cx: clamp(Math.round((x - minX) / cell), 0, cols - 1),
+      cz: clamp(Math.round((z - minZ) / cell), 0, rows - 1),
     });
     const start = toCell(sx, sz);
     const goal = toCell(tx, tz);
     const key = (cx: number, cz: number) => cz * cols + cx;
     const isFree = (cx: number, cz: number) => {
-      const x = cx * cell;
-      const z = cz * cell;
+      const x = minX + cx * cell;
+      const z = minZ + cz * cell;
       return !this.isBlocked(x, z, 0.28);
     };
 
@@ -3170,7 +3729,7 @@ export class OfficeEngine {
         const path: Array<{ x: number; z: number }> = [];
         let node: PathNode | null = current;
         while (node) {
-          path.push({ x: node.x * cell, z: node.z * cell });
+          path.push({ x: minX + node.x * cell, z: minZ + node.z * cell });
           node = node.parent;
         }
         path.reverse();
@@ -3286,6 +3845,7 @@ export class OfficeEngine {
     this.updateAgents(dt, elapsed);
     this.updateZoe(elapsed);
     this.updateBubbles();
+    this.updateLabels();
     this.updateCamera(dt);
     this.updateMarker();
     this.updateRoomCheck();
@@ -3470,23 +4030,61 @@ export class OfficeEngine {
     }
   }
 
+  /**
+   * A room sign that fills the screen when the camera drifts through it reads
+   * as a wall, not a label. Fade the demo signs out near the camera and at the
+   * far edge of the building.
+   */
+  private updateLabels() {
+    for (const sprite of this.labelSprites) {
+      const distance = this.camera.position.distanceTo(sprite.position);
+      const near = clamp((distance - 2.2) / 2.6, 0, 1);
+      const far = 1 - clamp((distance - 38) / 16, 0, 1);
+      const material = sprite.material as THREE.SpriteMaterial;
+      material.opacity = near * far;
+      material.transparent = true;
+      sprite.visible = material.opacity > 0.03;
+    }
+  }
+
   /** Frame the whole tower, or the storey a search or lift is focused on. */
   private updateTowerCamera(dt: number) {
     const tower = this.tower;
     if (!tower) return;
 
+    const focused = tower.focusedFloorIndex;
+    const framed = tower.roomIsFramed;
     const targetY = tower.focusY;
+    const targetX = tower.focusX;
     const height = Math.max(tower.height, 6);
-    const distance = height * 0.62 + 15;
-    const desired = new THREE.Vector3(
-      Math.sin(this.cameraYaw) * distance,
-      targetY + height * 0.12,
-      Math.cos(this.cameraYaw) * distance
+    // Three framings: the whole tower, one storey, one office. Each step in
+    // narrows the slice of the facade in frame — if the width of the building
+    // kept setting the distance, clicking a storey would only recentre the
+    // camera and never actually zoom.
+    const halfFov = Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2);
+    const halfWidth = halfFov * Math.max(this.camera.aspect, 0.5);
+    const storey = height / Math.max(tower.floorCount, 1);
+    const spanWidth =
+      focused === null
+        ? tower.width * 0.82 + tower.depth * 0.58 + 10
+        : framed
+          ? Math.min(tower.width * 0.3, 9)
+          : tower.width * 0.62;
+    const spanHeight =
+      focused === null ? height + 5 : framed ? storey + 3.5 : storey + 8;
+    const distance = Math.max(
+      focused === null ? 24 : framed ? 9 : 16,
+      (spanWidth / 2 / halfWidth) * 1.12,
+      (spanHeight / 2 / halfFov) * 1.12
     );
+    // Straight-on elevation, not a three-quarter view: the facade faces the
+    // viewer and the camera slides along it to reach the office in frame.
+    const lift = focused === null ? 1.6 : 0.9;
+    const desired = new THREE.Vector3(targetX, targetY + lift, distance);
 
     this.cameraPosition.lerp(desired, Math.min(dt * 3, 1));
     this.cameraTarget.lerp(
-      new THREE.Vector3(0, targetY, 0),
+      new THREE.Vector3(targetX, targetY + (focused === null ? 0.6 : 0), 0),
       Math.min(dt * 3, 1)
     );
     this.camera.position.copy(this.cameraPosition);
@@ -3495,12 +4093,13 @@ export class OfficeEngine {
 
   private updateCamera(dt: number) {
     if (this.cinematic) {
-      const center = new THREE.Vector3(28, 0, 18);
+      const center = this.planCenter;
+      const radius = Math.max(this.planWidth, this.planDepth) * 0.55 + 18;
       const angle = this.cinemaTime * 0.12 + 0.6;
       const desired = new THREE.Vector3(
-        center.x + Math.sin(angle) * 47,
-        31,
-        center.z + Math.cos(angle) * 47
+        center.x + Math.sin(angle) * radius,
+        radius * 0.72,
+        center.z + Math.cos(angle) * radius
       );
       this.camera.position.lerp(desired, Math.min(dt * 2, 1));
       this.cameraTarget.lerp(
@@ -3562,10 +4161,11 @@ export class OfficeEngine {
 
   private updateProximity() {
     const distance = Math.hypot(
-      this.playerPosition.x - ZOE_POS.x,
-      this.playerPosition.z - ZOE_POS.z
+      this.playerPosition.x - this.zoePosition.x,
+      this.playerPosition.z - this.zoePosition.z
     );
-    const near = distance < 2.75;
+    // Zoe only exists in reception on the general floor.
+    const near = (!this.isLive || this.activeFloor === 0) && distance < 2.75;
     if (near !== this.nearZoe) {
       this.nearZoe = near;
       this.callbacks.onZoeProximity(near);
