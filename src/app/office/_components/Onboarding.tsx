@@ -13,19 +13,24 @@ import {
 
 export function Onboarding({
   open,
+  name,
+  mode = "demo",
   onClose,
   onTour,
 }: {
   open: boolean;
+  /** The signed-in person, so the copy is about them and not a demo actor. */
+  name?: string;
+  mode?: "live" | "demo";
   onClose: () => void;
   onTour: () => void;
 }) {
   if (!open) return null;
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-16 z-40 flex justify-center px-3 sm:bottom-24">
-      <div className="office-glass-strong office-fade-up pointer-events-auto w-full max-w-[44rem] overflow-hidden rounded-3xl">
-        <div className="flex items-start justify-between gap-3 border-b border-white/8 px-5 py-4">
+    <div className="pointer-events-none absolute inset-x-0 bottom-40 z-40 flex justify-center px-3 sm:bottom-24">
+      <div className="office-glass-strong office-fade-up pointer-events-auto flex max-h-[58vh] w-full max-w-[44rem] flex-col overflow-hidden rounded-3xl">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-white/8 px-5 py-4">
           <div>
             <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.2em] text-[#a78bfa]">
               Welcome to The Office
@@ -34,8 +39,9 @@ export function Onboarding({
               A building for the conversations you already have.
             </h2>
             <p className="mt-1 max-w-[34rem] text-[0.76rem] leading-relaxed text-[#8f98b2]">
-              You are signed in as Ada. Channel rooms mirror your Zedu channels,
-              private offices mirror DMs, and Zoe is at reception.
+              {mode === "live"
+                ? `${name ? `You are signed in as ${name}. ` : ""}Channel rooms mirror your Zedu channels, private offices mirror DMs, and Zoe is at reception.`
+                : "You are signed in as Ada. Channel rooms mirror your Zedu channels, private offices mirror DMs, and Zoe is at reception."}
             </p>
           </div>
           <button
@@ -48,25 +54,27 @@ export function Onboarding({
           </button>
         </div>
 
-        <div className="grid gap-2 px-4 py-4 sm:grid-cols-3">
-          <Tip
-            icon={<Keyboard className="h-4 w-4" />}
-            title="Move around"
-            body="WASD or arrow keys. Shift to run. Click any floor tile to walk there."
-          />
-          <Tip
-            icon={<DoorOpen className="h-4 w-4" />}
-            title="Walk into rooms"
-            body="Doors are real. Channel rooms open their existing messages as you enter."
-          />
-          <Tip
-            icon={<Wrench className="h-4 w-4" />}
-            title="Make it yours"
-            body="In your private office, press B to open the catalogue, hover the floor and press P to place."
-          />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="grid gap-2 px-4 py-4 sm:grid-cols-3">
+            <Tip
+              icon={<Keyboard className="h-4 w-4" />}
+              title="Move around"
+              body="WASD or arrow keys. Shift to run. Click any floor tile to walk there."
+            />
+            <Tip
+              icon={<DoorOpen className="h-4 w-4" />}
+              title="Walk into rooms"
+              body="Doors are real. Channel rooms open their existing messages as you enter."
+            />
+            <Tip
+              icon={<Wrench className="h-4 w-4" />}
+              title="Make it yours"
+              body="In your private office, press B to open the catalogue, hover the floor and press P to place."
+            />
+          </div>
         </div>
 
-        <div className="flex flex-col-reverse gap-2 border-t border-white/8 bg-white/[0.02] px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-white/8 bg-white/[0.02] px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
           <button
             type="button"
             className="text-left text-[0.68rem] font-bold uppercase tracking-[0.14em] text-[#7f89a4] transition-colors hover:text-white"

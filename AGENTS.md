@@ -15,6 +15,15 @@ Instructions for AI coding agents working in `zedu-fe` (Next.js 16 App Router, R
 - Never hardcode public URLs or client-side identifiers. Read public config from `process.env.NEXT_PUBLIC_*`; keep secrets in server-only environment variables.
 - Never create `* copy.*` files. Edit the original.
 
+## The Office (3D building)
+
+The 3D office lives in `src/app/office` and the live wrapper in `src/app/(client)/[org]/_components/office`.
+
+- **Read the PRD first, every time.** `PRD.md` Appendix C is the source of truth for the tower's visual references and layout rules. Check any visual or layout change against it before writing code, and update the appendix when the design changes.
+- Keep the demo and the live office on the same scene code (`OfficeDemo`, `OfficeEngine`, `tower-scene`); the source decides the data, never the rendering.
+- The tower must stay a cutaway with every storey sized from its contents: member floors filled up to 40 private offices, the general floor resizing its channel strip as channels are added. Do not reintroduce a fixed 8x5 grid.
+- The reference builds for the tower look are linked in `PRD.md` Appendix C. Use them when judging presentation.
+
 ## Commands
 
 The package manager is **pnpm** (`pnpm install`, `pnpm <script>`). Never use npm or yarn, and don't regenerate `package-lock.json` or `yarn.lock`.

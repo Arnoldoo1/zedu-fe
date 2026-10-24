@@ -8,6 +8,7 @@ import {
   Compass,
   DoorOpen,
   HelpCircle,
+  Layers,
   LogOut,
   Map,
   MessageSquare,
@@ -25,16 +26,21 @@ export interface PresencePoint {
   z: number;
   roomId: string;
   status: PresenceStatus;
+  /** The tint of their in-world avatar, so the tower shows the same person. */
+  tint?: string;
 }
 
 interface HudProps {
   room: OfficeRoom | null;
   rooms: OfficeRoom[];
   onlineCount: number;
+  presenceState: "connecting" | "live";
   currentRoomId: string | null;
   player: { x: number; z: number; yaw: number };
   presence: PresencePoint[];
   avatar: AvatarConfig;
+  selfName: string;
+  selfRole: string;
   nearZoe: boolean;
   unread: number;
   chatOpen: boolean;
@@ -44,6 +50,7 @@ interface HudProps {
   onToggleMap: () => void;
   onOpenDirectory: () => void;
   onOpenAvatar: () => void;
+  onOpenTower: () => void;
   onToggleChat: () => void;
   onToggleEditor: () => void;
   onHelp: () => void;
@@ -64,10 +71,13 @@ export default function Hud({
   room,
   rooms,
   onlineCount,
+  presenceState,
   currentRoomId,
   player,
   presence,
   avatar,
+  selfName,
+  selfRole,
   nearZoe,
   unread,
   chatOpen,
@@ -77,6 +87,7 @@ export default function Hud({
   onToggleMap,
   onOpenDirectory,
   onOpenAvatar,
+  onOpenTower,
   onToggleChat,
   onToggleEditor,
   onHelp,
@@ -86,6 +97,13 @@ export default function Hud({
 }: HudProps) {
   const roomLabel = room?.name ?? "Corridor";
   const roomAccent = room?.accent ?? "#a78bfa";
+  const initials =
+    selfName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? "")
+      .join("") || "Z";
 
   return (
     <>
@@ -130,8 +148,15 @@ export default function Hud({
               </p>
             </div>
             <span className="ml-1 hidden items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[0.62rem] font-bold text-[#aeb6cb] sm:flex">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#34d399]" />
-              {onlineCount} online
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full",
+                  presenceState === "live"
+                    ? "bg-[#34d399]"
+                    : "animate-pulse bg-[#f59e0b]"
+                )}
+              />
+              {presenceState === "live" ? `${onlineCount} here` : "Connecting"}
             </span>
           </div>
         </div>
@@ -142,15 +167,17 @@ export default function Hud({
               className="flex h-7 w-7 items-center justify-center rounded-full text-[0.62rem] font-black text-[#0b0d17]"
               style={{ backgroundColor: avatar.tint }}
             >
-              AO
+              {initials}
             </span>
             <div className="leading-tight">
-              <p className="text-[0.74rem] font-extrabold text-white">
-                Ada Obi
+              <p className="max-w-[9rem] truncate text-[0.74rem] font-extrabold text-white">
+                {selfName}
               </p>
-              <p className="text-[0.58rem] font-semibold uppercase tracking-[0.12em] text-[#7f89a4]">
-                Admin
-              </p>
+              {selfRole && (
+                <p className="max-w-[9rem] truncate text-[0.58rem] font-semibold uppercase tracking-[0.12em] text-[#7f89a4]">
+                  {selfRole}
+                </p>
+              )}
             </div>
           </div>
 
@@ -173,6 +200,14 @@ export default function Hud({
           </button>
           <button
             type="button"
+            className="office-icon-button"
+            onClick={onOpenTower}
+            aria-label="Open the tower"
+          >
+            <Layers className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
             className="office-icon-button hidden sm:inline-flex"
             onClick={onOpenAvatar}
             aria-label="Customise avatar"
@@ -189,7 +224,7 @@ export default function Hud({
           </button>
           <button
             type="button"
-            className="office-icon-button hidden lg:inline-flex"
+            className="office-icon-button"
             onClick={onExit}
             aria-label="Leave the office"
           >
@@ -198,7 +233,12 @@ export default function Hud({
         </div>
       </header>
 
-      <div className="pointer-events-none absolute bottom-3 left-3 z-30 flex flex-col gap-2 sm:bottom-5 sm:left-5">
+      <div
+        className={cn(
+          "pointer-events-none absolute left-3 z-30 flex flex-col gap-2 sm:left-5",
+          isMobile ? "bottom-44" : "bottom-3 sm:bottom-5"
+        )}
+      >
         {mapOpen ? (
           <Minimap
             rooms={rooms}
@@ -271,7 +311,12 @@ export default function Hud({
         )}
       </div>
 
-      <div className="absolute bottom-4 right-3 z-30 flex flex-col items-end gap-2 sm:bottom-5 sm:right-5">
+      <div
+        className={cn(
+          "absolute right-3 z-30 flex flex-col items-end gap-2 sm:right-5",
+          isMobile ? "bottom-44" : "bottom-4 sm:bottom-5"
+        )}
+      >
         <button
           type="button"
           className="office-icon-button relative !h-11 !w-11 !rounded-2xl"
@@ -327,6 +372,42 @@ export function Minimap({
   compact?: boolean;
 }) {
   const width = compact ? 190 : 248;
+  // The map is drawn from the rooms on the floor the user is standing on, so a
+  // live layout (which can be wider and deeper than the demo) always fits.
+  const frame = (() => {
+    if (!rooms.length) {
+      return { minX: 0, minZ: 0, width: 56, depth: 36, pad: 0.6 };
+    }
+    let minX = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxZ = -Infinity;
+    for (const room of rooms) {
+      minX = Math.min(minX, room.bounds.x);
+      minZ = Math.min(minZ, room.bounds.z);
+      maxX = Math.max(maxX, room.bounds.x + room.bounds.w);
+      maxZ = Math.max(maxZ, room.bounds.z + room.bounds.d);
+    }
+    const depth = maxZ - minZ;
+    return {
+      minX,
+      minZ,
+      width: maxX - minX,
+      depth,
+      pad: Math.max(0.8, Math.max(maxX - minX, depth) * 0.035),
+    };
+  })();
+  const floorRoomIds = new Set(rooms.map((room) => room.id));
+  const floorPresence = presence.filter((point) =>
+    floorRoomIds.has(point.roomId)
+  );
+  const zoeRoom = rooms.find((room) => room.kind === "reception");
+  const zoe = zoeRoom
+    ? {
+        x: zoeRoom.bounds.x + zoeRoom.bounds.w / 2,
+        z: zoeRoom.bounds.z + zoeRoom.bounds.d * 0.25,
+      }
+    : null;
   return (
     <div
       className="office-glass pointer-events-auto overflow-hidden rounded-2xl"
@@ -349,29 +430,20 @@ export function Minimap({
         </button>
       </div>
       <svg
-        viewBox="0 0 56 36"
+        viewBox={`${frame.minX - frame.pad} ${frame.minZ - frame.pad} ${
+          frame.width + frame.pad * 2
+        } ${frame.depth + frame.pad * 2}`}
         className="block w-full"
         role="img"
         aria-label="Office floor map"
       >
-        <rect x="0" y="0" width="56" height="36" rx="1" fill="#080b14" />
         <rect
-          x="0.2"
-          y="0.2"
-          width="43.6"
-          height="35.6"
+          x={frame.minX - frame.pad}
+          y={frame.minZ - frame.pad}
+          width={frame.width + frame.pad * 2}
+          height={frame.depth + frame.pad * 2}
           rx="0.8"
-          fill="none"
-          stroke="rgba(255,255,255,0.12)"
-          strokeWidth="0.18"
-        />
-        <rect
-          x="43.8"
-          y="8"
-          width="12"
-          height="27.8"
-          rx="0.8"
-          fill="none"
+          fill="#080b14"
           stroke="rgba(255,255,255,0.12)"
           strokeWidth="0.18"
         />
@@ -425,7 +497,7 @@ export function Minimap({
             </g>
           );
         })}
-        {presence.map((agent) => (
+        {floorPresence.map((agent) => (
           <circle
             key={agent.id}
             cx={agent.x}
@@ -437,17 +509,21 @@ export function Minimap({
             opacity="0.95"
           />
         ))}
-        <circle cx="8.5" cy="3.2" r="0.62" fill="#f4c46a" />
-        <text
-          x="8.5"
-          y="3.85"
-          textAnchor="middle"
-          fontSize="0.95"
-          fontWeight="900"
-          fill="#0b0d17"
-        >
-          Z
-        </text>
+        {zoe && (
+          <>
+            <circle cx={zoe.x} cy={zoe.z} r="0.62" fill="#f4c46a" />
+            <text
+              x={zoe.x}
+              y={zoe.z + 0.65}
+              textAnchor="middle"
+              fontSize="0.95"
+              fontWeight="900"
+              fill="#0b0d17"
+            >
+              Z
+            </text>
+          </>
+        )}
         <circle
           cx={player.x}
           cy={player.z}

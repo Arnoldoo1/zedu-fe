@@ -45,7 +45,9 @@ export function getSharedCentrifuge(): Centrifuge {
   if (!sharedClient) {
     sharedClient = new Centrifuge(connectUrl, {
       getToken: getConnectionToken,
-      debug: true,
+      debug: process.env.NODE_ENV !== "production",
+      minReconnectDelay: 1_500,
+      maxReconnectDelay: 30_000,
     });
     sharedClient.connect();
   }
@@ -67,7 +69,13 @@ export function prepareChannelSubscription(
     return existingSubscription;
   }
 
-  const sub = client.newSubscription(channel, options);
+  // A refused channel used to be retried in a tight loop. Back off so a bad
+  // room id costs one request every few seconds, not hundreds a second.
+  const sub = client.newSubscription(channel, {
+    minResubscribeDelay: 2_000,
+    maxResubscribeDelay: 60_000,
+    ...options,
+  });
   subscriptionRefCounts.set(channel, 1);
   return sub;
 }

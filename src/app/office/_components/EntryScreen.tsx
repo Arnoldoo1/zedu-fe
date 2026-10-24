@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   ArrowRight,
   Armchair,
@@ -29,9 +30,46 @@ export default function EntryScreen({
   onTour,
 }: EntryScreenProps) {
   const live = mode === "live";
+  // Let the building show itself: the copy steps back after half a minute
+  // without input and returns as soon as the visitor moves.
+  const [idle, setIdle] = useState(false);
+
+  useEffect(() => {
+    let timer = 0;
+    const wake = () => {
+      setIdle(false);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setIdle(true), 30_000);
+    };
+    wake();
+    const events = [
+      "pointermove",
+      "pointerdown",
+      "keydown",
+      "wheel",
+      "touchstart",
+    ];
+    for (const event of events) {
+      window.addEventListener(event, wake, { passive: true });
+    }
+    return () => {
+      window.clearTimeout(timer);
+      for (const event of events) {
+        window.removeEventListener(event, wake);
+      }
+    };
+  }, []);
+
+  const scrimOff = idle ? "opacity-[0.35]" : "opacity-100";
 
   return (
     <div className="office-entry">
+      {/* The scrim exists to keep the copy readable over a daylight building.
+          Once the copy steps back, it thins with it so the tower shows through. */}
+      <div
+        aria-hidden
+        className={`office-entry-scrim pointer-events-none transition-opacity duration-700 ${scrimOff}`}
+      />
       <div className="office-entry-content">
         <div className="flex items-center gap-3">
           <img src="/login_logo.svg" alt="Zedu" className="h-7 w-auto" />
@@ -45,37 +83,45 @@ export default function EntryScreen({
           </span>
         </div>
 
-        <p className="mt-10 text-[0.7rem] font-extrabold uppercase tracking-[0.34em] text-[#a78bfa]">
-          Zedu · spatial collaboration
-        </p>
-        <h1 className="office-entry-title mt-4">
-          Your team,
-          <br />
-          <span>with a sense of place.</span>
-        </h1>
-        <p className="mt-6 max-w-[30rem] text-[0.98rem] leading-relaxed text-[#aab2c8]">
-          The conversations you already have, in a building you can walk
-          through. Channel rooms, private offices, presence, furniture and Zoe —
-          all on your existing Zedu session.
-        </p>
+        <div
+          className={
+            idle
+              ? "pointer-events-none opacity-0 transition-opacity duration-700"
+              : "opacity-100 transition-opacity duration-700"
+          }
+        >
+          <p className="mt-10 text-[0.7rem] font-extrabold uppercase tracking-[0.34em] text-[#a78bfa]">
+            Zedu · spatial collaboration
+          </p>
+          <h1 className="office-entry-title mt-4">
+            Your team,
+            <br />
+            <span>with a sense of place.</span>
+          </h1>
+          <p className="mt-6 max-w-[30rem] text-[0.98rem] leading-relaxed text-[#aab2c8]">
+            The conversations you already have, in a building you can walk
+            through. Channel rooms, private offices, presence, furniture and Zoe
+            — all on your existing Zedu session.
+          </p>
 
-        <div className="office-pill-row mt-7">
-          <span className="office-chip">
-            <DoorOpen className="h-3.5 w-3.5 text-[#a78bfa]" />
-            Channel rooms
-          </span>
-          <span className="office-chip">
-            <Armchair className="h-3.5 w-3.5 text-[#34d399]" />
-            Private offices
-          </span>
-          <span className="office-chip">
-            <Users className="h-3.5 w-3.5 text-[#60a5fa]" />
-            Live presence
-          </span>
-          <span className="office-chip">
-            <Sparkles className="h-3.5 w-3.5 text-[#f4c46a]" />
-            Zoe in-world
-          </span>
+          <div className="office-pill-row mt-7">
+            <span className="office-chip">
+              <DoorOpen className="h-3.5 w-3.5 text-[#a78bfa]" />
+              Channel rooms
+            </span>
+            <span className="office-chip">
+              <Armchair className="h-3.5 w-3.5 text-[#34d399]" />
+              Private offices
+            </span>
+            <span className="office-chip">
+              <Users className="h-3.5 w-3.5 text-[#60a5fa]" />
+              Live presence
+            </span>
+            <span className="office-chip">
+              <Sparkles className="h-3.5 w-3.5 text-[#f4c46a]" />
+              Zoe in-world
+            </span>
+          </div>
         </div>
 
         <div className="mt-9 flex flex-col gap-3 sm:flex-row">

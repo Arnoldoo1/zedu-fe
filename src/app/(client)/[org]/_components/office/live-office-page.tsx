@@ -135,7 +135,17 @@ export default function LiveOfficePage() {
     );
   }
 
-  return <OfficeDemo source={source} />;
+  return (
+    <OfficeDemo
+      source={source}
+      self={{
+        id: userId,
+        name: state?.user?.username ?? "You",
+        role: state?.orgData?.name ?? "",
+      }}
+      onExit={() => router.push(`/${orgSlug}`)}
+    />
+  );
 }
 
 function StatusCard({

@@ -16,6 +16,7 @@ import type {
   OfficeFloor,
   OfficeFurnitureItem,
   OfficeOccupant,
+  OfficePresenceState,
   OfficeRoom,
   OfficeSource,
   OfficeZoeContext,
@@ -75,6 +76,39 @@ function unwrap<T>(response: any, fallback: string): T {
     throw new Error(response?.data?.message ?? fallback);
   }
   return response?.data?.data as T;
+}
+
+/** A row as the 2D chat's thread endpoints return it; the office reads a few fields. */
+interface RawChatRow {
+  thread_id?: string;
+  user_id?: string;
+  username?: string;
+  full_name?: string;
+  message?: string;
+  created_at?: string;
+  type?: string;
+}
+
+function toOfficeMessage(
+  roomId: string,
+  row: RawChatRow,
+  selfId: string
+): OfficeChatMessage | null {
+  const text = typeof row?.message === "string" ? row.message.trim() : "";
+  // A row with no text is an attachment or an edited-away body: the office
+  // drawer has no media renderer, so it is dropped rather than drawn empty.
+  if (!row?.thread_id || !text) return null;
+
+  const at = Date.parse(row.created_at ?? "");
+  return {
+    id: row.thread_id,
+    roomId,
+    userId: row.user_id ?? "",
+    name: row.username ?? row.full_name ?? "Someone",
+    text,
+    at: Number.isNaN(at) ? Date.now() : at,
+    self: row.user_id === selfId,
+  };
 }
 
 /**
@@ -198,15 +232,13 @@ function buildRooms(apiRooms: OfficeApiRoom[]): OfficeRoom[] {
         }
       : template.bounds;
 
-    // Offices and areas are laid out by the server, so their walk-in point
-    // must follow the footprint rather than the demo's static slot.
-    const derived = room.kind === "personal" || room.kind === "area";
-    const spawn = derived
-      ? { x: bounds.x + bounds.w / 2, z: bounds.z + bounds.d / 2 }
-      : template.spawn;
-    const door = derived
-      ? { x: bounds.x + bounds.w / 2, z: bounds.z + bounds.d }
-      : template.door;
+    // The server lays the rooms out, so the walk-in point follows every
+    // footprint. The demo's static spawns only make sense on the demo plan.
+    const spawn = {
+      x: bounds.x + bounds.w / 2,
+      z: bounds.z + bounds.d - Math.min(1.6, bounds.d * 0.35),
+    };
+    const door = { x: bounds.x + bounds.w / 2, z: bounds.z + bounds.d };
 
     rooms.push({
       ...template,
@@ -489,7 +521,8 @@ export class LiveOfficeSource implements OfficeSource {
 
   subscribePresence(
     roomId: string,
-    onPresence: (occupants: OfficeOccupant[]) => void
+    onPresence: (occupants: OfficeOccupant[]) => void,
+    onState?: (state: OfficePresenceState) => void
   ): () => void {
     const client = getSharedCentrifuge();
     // Presence is published per room, so the subscription has to be for the
@@ -503,6 +536,23 @@ export class LiveOfficeSource implements OfficeSource {
     const subscription = prepareChannelSubscription(client, channel, {
       getToken: () => getSubscriptionToken(channel),
     });
+
+    // Seed the roster once from the REST snapshot, so people who were already
+    // in the room survive the first realtime event.
+    this.roster.clear();
+    onState?.("connecting");
+    let cancelled = false;
+    void this.fetchOccupants(roomId)
+      .then((occupants) => {
+        if (cancelled) return;
+        for (const occupant of occupants) {
+          this.roster.set(occupant.userId, occupant);
+        }
+        onPresence([...this.roster.values()]);
+      })
+      .catch(() => {
+        // The subscription still delivers everyone who arrives later.
+      });
 
     const onPublication = (ctx: any) => {
       const presence = ctx?.data?.presence as OfficeOccupant | undefined;
@@ -519,14 +569,76 @@ export class LiveOfficeSource implements OfficeSource {
       onPresence([...this.roster.values()]);
     };
 
+    const onSubscribed = () => onState?.("live");
+    const onUnsubscribed = () => onState?.("connecting");
+
+    subscription.on("publication", onPublication);
+    subscription.on("subscribed", onSubscribed);
+    subscription.on("unsubscribed", onUnsubscribed);
+    // A shared subscription may already be live from another room.
+    if (subscription.state === "subscribed") onState?.("live");
+    subscription.subscribe();
+
+    return () => {
+      cancelled = true;
+      subscription.off("publication", onPublication);
+      subscription.off("subscribed", onSubscribed);
+      subscription.off("unsubscribed", onUnsubscribed);
+      releaseChannelSubscription(client, channel, subscription);
+      // Clear the roster for this room so a subsequent subscription starts clean.
+      this.roster.clear();
+    };
+  }
+
+  async fetchMessages(roomId: string): Promise<OfficeChatMessage[]> {
+    const channelId = this.channelIdForRoom(roomId);
+    if (!channelId) return [];
+
+    // The office reads the conversation the 2D chat already draws: channel
+    // threads for a channel room, DM threads for the office that mirrors a DM.
+    const path = roomId.startsWith("channel:")
+      ? `/threads/channels/${channelId}?page=1&limit=40`
+      : `/dms/channels/${channelId}/threads?page=1&limit=50`;
+    const rows =
+      unwrap<RawChatRow[]>(
+        await GetRequest(path),
+        "The conversation could not be read."
+      ) ?? [];
+
+    return rows
+      .map((row) => toOfficeMessage(roomId, row, this.userId))
+      .filter((message): message is OfficeChatMessage => Boolean(message))
+      .sort((a, b) => a.at - b.at);
+  }
+
+  subscribeMessages(
+    roomId: string,
+    onMessage: (message: OfficeChatMessage) => void
+  ): () => void {
+    const channelId = this.channelIdForRoom(roomId);
+    if (!channelId) return () => {};
+
+    // New messages land on the raw backend channel id, the same name the 2D
+    // chat subscribes to — there is no office-scoped chat channel to join.
+    const client = getSharedCentrifuge();
+    const subscription = prepareChannelSubscription(client, channelId, {
+      getToken: () => getSubscriptionToken(channelId),
+    });
+
+    const onPublication = (ctx: any) => {
+      if (ctx?.data?.type !== "message") return;
+      const message = toOfficeMessage(roomId, ctx.data, this.userId);
+      // sendChat already drew our own message, so its echo would double it.
+      if (!message || message.self) return;
+      onMessage(message);
+    };
+
     subscription.on("publication", onPublication);
     subscription.subscribe();
 
     return () => {
       subscription.off("publication", onPublication);
-      releaseChannelSubscription(client, channel, subscription);
-      // Clear the roster for this room so a subsequent subscription starts clean.
-      this.roster.clear();
+      releaseChannelSubscription(client, channelId, subscription);
     };
   }
 

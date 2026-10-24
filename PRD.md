@@ -1182,4 +1182,37 @@ The following are explicitly excluded from this PRD:
 
 ---
 
+## Appendix C: The Office — 3D Tower References
+
+The 3D building ("The Office", `src/app/office`) is part of the product surface. The tower view is judged against these references:
+
+| Reference                                                                    | Why it matters                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [AviOfLagos/zedu-tower](https://github.com/AviOfLagos/zedu-tower/tree/main)  | The primary build: a cutaway office tower with lit rooms, people and lift cores on every storey. Ten storeys, rooms sized from their contents, short storey tags (B1/L/F#), people visible inside. |
+| [Chris DiMarco](https://x.com/chrisjdimarco/status/2112951160118431979)      | Presentation: how a populated building should read at a glance.                                                                                                                                    |
+| [Konstantin Saifo](https://x.com/konstantinsaifo/status/2113161829891686767) | Presentation: lighting, depth and material treatment.                                                                                                                                              |
+
+### Tower requirements
+
+These rules are the source of truth for the office work; check every visual change against them.
+
+1. **It is a cutaway tower, not a wall of glass.** Storeys are open at the front, with slabs, a lift core, floor tags, a plinth and a roof. Every private office carries its occupant's avatar; a lit office also shows a desk silhouette, an unlit one still reads as somebody's office.
+2. **The demo is the full building.** At least ten storeys, and every member floor is filled to the live capacity (40 private offices). The three walkable demo offices stay in the directory among the filler offices.
+3. **Every storey sizes its own grid from its contents.** There is no fixed 8x5 slot table. Rooms expand to use the full width and height of the facade.
+4. **Private offices fill the floor.** Up to 40 per member floor, twenty per row across two rows; a floor with fewer people stretches those offices across the whole facade instead of leaving empty wall.
+5. **The general floor resizes for channels.** Channels wrap into as many rows as they need and each row stretches to the full width, so the top floor keeps accommodating every channel the organisation has.
+6. **The lift is real.** A car rides the core to the storey in focus and idles between storeys otherwise. Selecting a storey tags it and frames it.
+7. **Directory-only storeys stay honest.** Where a storey has offices in the directory but no walkable floor plan (the demo's filler floors), selecting a person frames their storey in the tower instead of diving into an empty plan.
+8. **Short tags, not sentences.** Storeys carry L / F1..Fn tags; names and occupancy live in the hover card and the search.
+9. **The tower is the front door.** Both the demo and the live office open on the tower, never on a floor plan. Entering the building means choosing a storey from the street.
+10. **The facade faces the viewer.** The tower is framed as a straight-on elevation, not a three-quarter or side view, whatever direction the player was last looking in.
+11. **Daylight outside, interior light inside.** The tower view is seen from the street: a daylight sky, a site under the plinth and a light fog. The floor view keeps the dark interior ambience the rooms are lit for.
+12. **One floor picker.** Storeys are chosen from a single dropdown; there is no rail of floor buttons across the bottom of the tower.
+13. **Reading a room is not entering it.** The first click on an office frames that one office and opens its DM or channel chat over the tower without moving the player or joining the room. The second click on the same office transports in, and the room's recent messages are spoken as bubbles the moment the player lands.
+14. **An office shows the same person as the floor does.** The avatar in a cell is that person's own identity — the same tint their in-world rig is built from — not the room's accent colour.
+15. **Leaving the office means going back to the app.** The tower's leave control returns to the 2D conversation: the organisation's chat in the live office, the site home in the demo. The tower carries no "back to the floor" control; Esc still does that.
+16. **The entry copy steps back for the building.** After 30 seconds without input the entry headline, description and chips fade out and the scrim thins with them so the rotating tower/floor backdrop is visible; any movement brings the copy straight back.
+
+---
+
 _This document was generated from analysis of the Zedu frontend codebase (v0.14.0). Backend behavior is inferred from API paths and real-time event shapes visible in connection handlers. For implementation details, refer to the source code in this repository._
