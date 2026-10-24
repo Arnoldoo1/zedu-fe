@@ -50,11 +50,19 @@ function encodeRoomId(roomId: string) {
 }
 
 function presenceChannel(orgId: string, floorIndex: number, roomId: string) {
-  // The organisation and the floor are part of the channel name, so two
-  // organisations can never share a room's presence.
-  return `office:org:${orgId}:floor:${floorIndex}:room:${encodeURIComponent(
-    roomId
-  )}:presence`;
+  // Colons are forbidden: Centrifugo resolves the namespace before the first
+  // `:`, and an undeclared namespace fails with `102: unknown channel`.
+  // Base64url-encode the room ID so characters like `:` and `/` are safe.
+  const bytes = new TextEncoder().encode(roomId);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  const encoded = btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  return `office_org_${orgId}_floor_${floorIndex}_room_${encoded}_presence`;
 }
 
 /**
