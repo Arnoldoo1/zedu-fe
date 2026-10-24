@@ -212,9 +212,9 @@ export default function OfficeDemo({
     for (const room of rooms) map[room.id] = room;
     return map;
   }, [rooms]);
-  const [phase, setPhase] = useState<"entry" | "office">(
-    source.mode === "live" ? "office" : "entry"
-  );
+  // The tower is the first view in both the demo and the live building, so the
+  // engine opens on the cinematic orbit and the user steps inside explicitly.
+  const [phase, setPhase] = useState<"entry" | "office">("entry");
   // Read once: the engine is created after the first render and must know
   // whether the user is already inside the office.
   const startsInOfficeRef = useRef(phase === "office");
@@ -729,8 +729,7 @@ export default function OfficeDemo({
     };
   }, [source, phase, roomId, mergePresence]);
 
-  // Enter/leave the room on the server so presence is published and capacity
-  // is enforced. This also triggers the BE to publish join/leave events.
+  // Live presence follows the room the player is in.
   useEffect(() => {
     if (source.mode !== "live" || phase !== "office" || !roomId) return;
 
@@ -1540,6 +1539,7 @@ export default function OfficeDemo({
         <EntryScreen
           ready={ready}
           avatar={avatar}
+          mode={source.mode}
           onEnter={enterOffice}
           onTour={startTour}
         />

@@ -8,6 +8,7 @@ import {
   Play,
   ShieldCheck,
   Sparkles,
+  UserRound,
   Users,
 } from "lucide-react";
 import type { AvatarConfig } from "./office-data";
@@ -15,6 +16,7 @@ import type { AvatarConfig } from "./office-data";
 interface EntryScreenProps {
   ready: boolean;
   avatar: AvatarConfig;
+  mode: "live" | "demo";
   onEnter: () => void;
   onTour: () => void;
 }
@@ -22,9 +24,12 @@ interface EntryScreenProps {
 export default function EntryScreen({
   ready,
   avatar,
+  mode,
   onEnter,
   onTour,
 }: EntryScreenProps) {
+  const live = mode === "live";
+
   return (
     <div className="office-entry">
       <div className="office-entry-content">
@@ -35,7 +40,9 @@ export default function EntryScreen({
             <Sparkles className="h-3 w-3" />
             The Office
           </span>
-          <span className="office-chip hidden sm:inline-flex">Demo</span>
+          <span className="office-chip hidden sm:inline-flex">
+            {live ? "Live" : "Demo"}
+          </span>
         </div>
 
         <p className="mt-10 text-[0.7rem] font-extrabold uppercase tracking-[0.34em] text-[#a78bfa]">
@@ -80,7 +87,7 @@ export default function EntryScreen({
           >
             {ready ? (
               <>
-                Enter the demo
+                {live ? "Enter the office" : "Enter the demo"}
                 <ArrowRight className="h-4 w-4" />
               </>
             ) : (
@@ -107,13 +114,15 @@ export default function EntryScreen({
               className="relative flex h-10 w-10 items-center justify-center rounded-full text-sm font-black text-[#0b0d17]"
               style={{ backgroundColor: avatar.tint }}
             >
-              AO
+              {live ? <UserRound className="h-4 w-4" /> : "AO"}
               <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#0b0d17] bg-[#34d399]" />
             </div>
             <div className="leading-tight">
-              <p className="text-sm font-bold text-white">Ada Obi</p>
+              <p className="text-sm font-bold text-white">
+                {live ? "Your session" : "Ada Obi"}
+              </p>
               <p className="text-[0.7rem] font-medium text-[#8f98b2]">
-                Product Designer · Zedu HQ
+                {live ? "Signed in to Zedu" : "Product Designer · Zedu HQ"}
               </p>
             </div>
             <span className="ml-2 hidden items-center gap-1.5 rounded-full border border-[#34d399]/25 bg-[#34d399]/10 px-2 py-1 text-[0.62rem] font-extrabold uppercase tracking-wider text-[#86efac] sm:flex">
@@ -128,45 +137,49 @@ export default function EntryScreen({
         </div>
       </div>
 
-      <div className="office-desktop-only pointer-events-none absolute bottom-6 right-7 text-right">
-        <p className="text-[0.62rem] font-bold uppercase tracking-[0.24em] text-white/30">
-          Demo build · local data
-        </p>
-        <p className="mt-1 text-[0.62rem] text-white/20">
-          The Office · zedu-team-mando · 2026
-        </p>
-      </div>
+      {!live && (
+        <div className="office-desktop-only pointer-events-none absolute bottom-6 right-7 text-right">
+          <p className="text-[0.62rem] font-bold uppercase tracking-[0.24em] text-white/30">
+            Demo build · local data
+          </p>
+          <p className="mt-1 text-[0.62rem] text-white/20">
+            The Office · zedu-team-mando · 2026
+          </p>
+        </div>
+      )}
 
-      <div className="pointer-events-none absolute right-[7%] top-[16%] hidden lg:block">
-        <div className="office-float relative">
-          <div className="absolute inset-0 -z-10 rounded-full bg-[#8b5cf6]/20 blur-3xl" />
-          <div className="office-glass rounded-2xl px-4 py-3">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-[#34d399]" />
-              <p className="text-[0.66rem] font-extrabold uppercase tracking-[0.18em] text-[#9aa3bd]">
-                Live in the pilot org
+      {!live && (
+        <div className="pointer-events-none absolute right-[7%] top-[16%] hidden lg:block">
+          <div className="office-float relative">
+            <div className="absolute inset-0 -z-10 rounded-full bg-[#8b5cf6]/20 blur-3xl" />
+            <div className="office-glass rounded-2xl px-4 py-3">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-[#34d399]" />
+                <p className="text-[0.66rem] font-extrabold uppercase tracking-[0.18em] text-[#9aa3bd]">
+                  Live in the pilot org
+                </p>
+              </div>
+              <p className="mt-2 text-sm font-bold text-white">
+                8 teammates online
               </p>
-            </div>
-            <p className="mt-2 text-sm font-bold text-white">
-              8 teammates online
-            </p>
-            <div className="mt-2 flex -space-x-2">
-              {["#f472b6", "#34d399", "#f59e0b", "#60a5fa", "#22d3ee"].map(
-                (tint) => (
-                  <span
-                    key={tint}
-                    className="h-6 w-6 rounded-full border-2 border-[#111422]"
-                    style={{ backgroundColor: tint }}
-                  />
-                )
-              )}
-              <span className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-[#111422] bg-white/10 text-[0.55rem] font-bold text-white">
-                +3
-              </span>
+              <div className="mt-2 flex -space-x-2">
+                {["#f472b6", "#34d399", "#f59e0b", "#60a5fa", "#22d3ee"].map(
+                  (tint) => (
+                    <span
+                      key={tint}
+                      className="h-6 w-6 rounded-full border-2 border-[#111422]"
+                      style={{ backgroundColor: tint }}
+                    />
+                  )
+                )}
+                <span className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-[#111422] bg-white/10 text-[0.55rem] font-bold text-white">
+                  +3
+                </span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
