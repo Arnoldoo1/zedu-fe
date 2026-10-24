@@ -179,6 +179,16 @@ export interface OfficeSource {
     onPresence: (occupants: OfficeOccupant[]) => void,
     onState?: (state: OfficePresenceState) => void
   ): () => void;
+  /**
+   * The conversation a room mirrors, oldest first. Reading a room from the
+   * street must show what is already in it, not only what arrives next.
+   */
+  fetchMessages(roomId: string): Promise<OfficeChatMessage[]>;
+  /** Messages other people post into a room while it is being read. */
+  subscribeMessages(
+    roomId: string,
+    onMessage: (message: OfficeChatMessage) => void
+  ): () => void;
 }
 
 /** Chat message shape shared by both sources. */

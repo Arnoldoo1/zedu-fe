@@ -305,6 +305,19 @@ export const demoSource: OfficeSource = {
   ) {
     return () => {};
   },
+
+  fetchMessages(_roomId: string): Promise<OfficeChatMessage[]> {
+    // The demo's conversations are seeded and simulated, so there is nothing
+    // to read from a server.
+    return Promise.resolve([]);
+  },
+
+  subscribeMessages(
+    _roomId: string,
+    _onMessage: (message: OfficeChatMessage) => void
+  ) {
+    return () => {};
+  },
 };
 
 function readStoredLayouts(): Record<string, OfficeFurnitureItem[]> {

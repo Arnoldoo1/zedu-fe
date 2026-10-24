@@ -78,6 +78,39 @@ function unwrap<T>(response: any, fallback: string): T {
   return response?.data?.data as T;
 }
 
+/** A row as the 2D chat's thread endpoints return it; the office reads a few fields. */
+interface RawChatRow {
+  thread_id?: string;
+  user_id?: string;
+  username?: string;
+  full_name?: string;
+  message?: string;
+  created_at?: string;
+  type?: string;
+}
+
+function toOfficeMessage(
+  roomId: string,
+  row: RawChatRow,
+  selfId: string
+): OfficeChatMessage | null {
+  const text = typeof row?.message === "string" ? row.message.trim() : "";
+  // A row with no text is an attachment or an edited-away body: the office
+  // drawer has no media renderer, so it is dropped rather than drawn empty.
+  if (!row?.thread_id || !text) return null;
+
+  const at = Date.parse(row.created_at ?? "");
+  return {
+    id: row.thread_id,
+    roomId,
+    userId: row.user_id ?? "",
+    name: row.username ?? row.full_name ?? "Someone",
+    text,
+    at: Number.isNaN(at) ? Date.now() : at,
+    self: row.user_id === selfId,
+  };
+}
+
 /**
  * Reads a server sent events answer into one string. The helper may stream
  * deltas or one final chunk, so every payload shape contributes its text.
@@ -554,6 +587,58 @@ export class LiveOfficeSource implements OfficeSource {
       releaseChannelSubscription(client, channel, subscription);
       // Clear the roster for this room so a subsequent subscription starts clean.
       this.roster.clear();
+    };
+  }
+
+  async fetchMessages(roomId: string): Promise<OfficeChatMessage[]> {
+    const channelId = this.channelIdForRoom(roomId);
+    if (!channelId) return [];
+
+    // The office reads the conversation the 2D chat already draws: channel
+    // threads for a channel room, DM threads for the office that mirrors a DM.
+    const path = roomId.startsWith("channel:")
+      ? `/threads/channels/${channelId}?page=1&limit=40`
+      : `/dms/channels/${channelId}/threads?page=1&limit=50`;
+    const rows =
+      unwrap<RawChatRow[]>(
+        await GetRequest(path),
+        "The conversation could not be read."
+      ) ?? [];
+
+    return rows
+      .map((row) => toOfficeMessage(roomId, row, this.userId))
+      .filter((message): message is OfficeChatMessage => Boolean(message))
+      .sort((a, b) => a.at - b.at);
+  }
+
+  subscribeMessages(
+    roomId: string,
+    onMessage: (message: OfficeChatMessage) => void
+  ): () => void {
+    const channelId = this.channelIdForRoom(roomId);
+    if (!channelId) return () => {};
+
+    // New messages land on the raw backend channel id, the same name the 2D
+    // chat subscribes to — there is no office-scoped chat channel to join.
+    const client = getSharedCentrifuge();
+    const subscription = prepareChannelSubscription(client, channelId, {
+      getToken: () => getSubscriptionToken(channelId),
+    });
+
+    const onPublication = (ctx: any) => {
+      if (ctx?.data?.type !== "message") return;
+      const message = toOfficeMessage(roomId, ctx.data, this.userId);
+      // sendChat already drew our own message, so its echo would double it.
+      if (!message || message.self) return;
+      onMessage(message);
+    };
+
+    subscription.on("publication", onPublication);
+    subscription.subscribe();
+
+    return () => {
+      subscription.off("publication", onPublication);
+      releaseChannelSubscription(client, channelId, subscription);
     };
   }
 

@@ -913,7 +913,10 @@ export class OfficeEngine {
     const rig =
       userId === "you"
         ? this.playerRig
-        : this.agents.find((agent) => agent.user.id === userId)?.rig;
+        : (this.agents.find((agent) => agent.user.id === userId)?.rig ??
+          // The live roster is keyed by user id in its own map, so a colleague
+          // who arrived over realtime can speak too.
+          this.agentRigs.get(userId));
     if (!rig) return;
     this.setBubble(rig, text, 7000);
   }

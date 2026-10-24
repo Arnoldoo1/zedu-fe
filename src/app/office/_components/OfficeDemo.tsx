@@ -317,6 +317,9 @@ export default function OfficeDemo({
   const timersRef = useRef<number[]>([]);
   const lastInvalidRef = useRef(0);
   const autoTourRef = useRef(false);
+  // Rooms whose real conversation has already been read, so re-entering a room
+  // does not refetch what is already on screen.
+  const historyRef = useRef(new Set<string>());
   // Full office occupants for the engine (includes avatar, displayName, etc.)
   const officeOccupantsRef = useRef<OfficeOccupant[]>([]);
 
@@ -861,6 +864,65 @@ export default function OfficeDemo({
     engineRef.current?.setOccupants(officeOccupantsRef.current);
   }, [source, phase, officeOccupantsRef.current]);
 
+  // A room being read is a room whose conversation matters: the one you are
+  // standing in, or the one held in frame from the street.
+  const readRoomId = towerPreview ?? roomId;
+
+  useEffect(() => {
+    if (source.mode !== "live" || phase !== "office" || !readRoomId) return;
+    if (historyRef.current.has(readRoomId)) return;
+    historyRef.current.add(readRoomId);
+
+    let cancelled = false;
+    source
+      .fetchMessages(readRoomId)
+      .then((messages) => {
+        if (cancelled || !messages.length) return;
+        setMessagesByRoom((previous) => {
+          const local = previous[readRoomId] ?? [];
+          const fetched = new Set(messages.map((entry) => entry.id));
+          const merged = [
+            ...messages,
+            ...local.filter((entry) => !fetched.has(entry.id)),
+          ].sort((a, b) => a.at - b.at);
+          return { ...previous, [readRoomId]: merged };
+        });
+      })
+      .catch(() => {
+        // A room that cannot be read is still a room you can stand in, but the
+        // next visit should try again.
+        historyRef.current.delete(readRoomId);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [source, phase, readRoomId]);
+
+  const ingestLiveMessage = useCallback((message: ChatMessage) => {
+    setMessagesByRoom((previous) => {
+      const room = previous[message.roomId] ?? [];
+      if (room.some((entry) => entry.id === message.id)) return previous;
+      return { ...previous, [message.roomId]: [...room, message] };
+    });
+    if (!stateRef.current.chatOpen) setUnread((value) => value + 1);
+    // Whoever is standing here says it out loud; showBubble ignores anyone
+    // without a rig, so a message from an empty room stays silent.
+    engineRef.current?.showBubble(message.userId, message.text);
+  }, []);
+
+  // The room you are in and the office you are reading from the street are
+  // usually different rooms, so they carry separate subscriptions.
+  useEffect(() => {
+    if (source.mode !== "live" || phase !== "office" || !roomId) return;
+    return source.subscribeMessages(roomId, ingestLiveMessage);
+  }, [source, phase, roomId, ingestLiveMessage]);
+
+  useEffect(() => {
+    if (source.mode !== "live" || !towerPreview) return;
+    return source.subscribeMessages(towerPreview, ingestLiveMessage);
+  }, [source, towerPreview, ingestLiveMessage]);
+
   // ------------------------------------------------------------------- handlers
 
   function handleRoomChange(room: typeof currentRoom) {
@@ -986,7 +1048,11 @@ export default function OfficeDemo({
         .map((point) => point.id)
     );
     for (const message of (messagesByRoom[targetId] ?? []).slice(-3)) {
-      if (message.self || !inRoom.has(message.userId)) continue;
+      if (message.self) continue;
+      // On live the roster for the room is only asked for when you arrive, so
+      // the sender is not known at this instant. showBubble already ignores
+      // anyone without a rig, so the check is only needed in the demo.
+      if (source.mode !== "live" && !inRoom.has(message.userId)) continue;
       engine.showBubble(message.userId, message.text);
     }
   }
