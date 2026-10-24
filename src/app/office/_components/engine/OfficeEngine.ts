@@ -16,6 +16,7 @@ import {
 } from "../office-data";
 import type { OfficeFloor, OfficeOccupant } from "~/types/office";
 import { TowerScene, type TowerOffice } from "./tower-scene";
+import { INK_CSS, PALETTE, PAPER_CSS } from "./palette";
 
 export interface EngineCallbacks {
   onReady: () => void;
@@ -112,6 +113,11 @@ const WALK_BOUNDS = [
 
 const ZOE_POS = { x: 8.5, z: 3.2 };
 
+// The interior is a lit building rather than a cave: this is the colour of the
+// light coming off cream plaster and a waxed wood floor, and it is what the
+// far end of a corridor fades into.
+const INTERIOR_BACKDROP = 0xe9e2d4;
+
 // The live building's footprint is derived from the rooms the server sends, so
 // the walking bounds follow the floor plan instead of the demo's two wings.
 const DEMO_PLAN = {
@@ -175,20 +181,203 @@ function roundRect(
   ctx.closePath();
 }
 
-function makeGridTexture(base: string, line: string): THREE.CanvasTexture {
+/**
+ * The three floor finishes the reference building uses. A tile is one metre,
+ * so a 5 by 5.4 office reads as eleven oak boards rather than one stretched
+ * gradient.
+ */
+function css(hex: number): string {
+  return `#${hex.toString(16).padStart(6, "0")}`;
+}
+
+type FloorFinish = "wood" | "carpet" | "terrazzo";
+
+/** Rooms you can shut a door on; everything else is an open zone on the plan. */
+function isClosedRoom(kind: OfficeRoom["kind"]): boolean {
+  return kind === "personal" || kind === "meeting" || kind === "focus";
+}
+
+function floorFinish(kind: string): FloorFinish {
+  if (kind === "personal" || kind === "focus" || kind === "meeting") {
+    return "wood";
+  }
+  if (kind === "channel" || kind === "lounge" || kind === "reception") {
+    return "carpet";
+  }
+  return "terrazzo";
+}
+
+function makeFloorTexture(finish: FloorFinish): THREE.CanvasTexture {
+  const base = css(
+    finish === "wood"
+      ? PALETTE.wood
+      : finish === "carpet"
+        ? PALETTE.carpet
+        : PALETTE.terrazzo
+  );
+  const seam = css(
+    finish === "wood"
+      ? PALETTE.woodDark
+      : finish === "carpet"
+        ? PALETTE.site
+        : PALETTE.stone
+  );
+
   return makeCanvasTexture(128, 128, (ctx) => {
     ctx.fillStyle = base;
     ctx.fillRect(0, 0, 128, 128);
-    ctx.strokeStyle = line;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(0, 0, 128, 128);
-    ctx.globalAlpha = 0.35;
-    ctx.beginPath();
-    ctx.moveTo(64, 0);
-    ctx.lineTo(64, 128);
-    ctx.moveTo(0, 64);
-    ctx.lineTo(128, 64);
+
+    if (finish === "terrazzo") {
+      // Aggregate speckle: four greys scattered over a pale binder.
+      const chips = [
+        seam,
+        css(PALETTE.stone),
+        css(PALETTE.accent),
+        css(PALETTE.slab),
+      ];
+      for (let i = 0; i < 130; i += 1) {
+        const t = noise2(i * 7.13) * 128;
+        const u = noise2(i * 3.71 + 91) * 128;
+        ctx.fillStyle = chips[i % chips.length];
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath();
+        ctx.arc(t, u, 1 + noise2(i * 1.9) * 2.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 0.25;
+      ctx.strokeStyle = css(PALETTE.slab);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0, 0, 128, 128);
+      ctx.beginPath();
+      ctx.moveTo(64, 0);
+      ctx.lineTo(64, 128);
+      ctx.moveTo(0, 64);
+      ctx.lineTo(128, 64);
+      ctx.stroke();
+      return;
+    }
+
+    if (finish === "carpet") {
+      // Tufted tiles: a light grid with a speckled pile inside each square.
+      for (let i = 0; i < 900; i += 1) {
+        ctx.fillStyle = i % 2 ? css(PALETTE.wallShade) : css(PALETTE.slab);
+        ctx.globalAlpha = 0.16;
+        ctx.fillRect(
+          noise2(i * 5.31) * 126,
+          noise2(i * 2.17 + 13) * 126,
+          1.4,
+          1.4
+        );
+      }
+      ctx.globalAlpha = 0.5;
+      ctx.strokeStyle = seam;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(0, 0, 128, 128);
+      ctx.beginPath();
+      ctx.moveTo(64, 0);
+      ctx.lineTo(64, 128);
+      ctx.moveTo(0, 64);
+      ctx.lineTo(128, 64);
+      ctx.stroke();
+      return;
+    }
+
+    // Oak boards: eight planks per tile with a butt joint every fourth one.
+    ctx.globalAlpha = 1;
+    for (let row = 0; row < 8; row += 1) {
+      const y = row * 16;
+      ctx.fillStyle = css(
+        noise2(row * 11.3) > 0.62 ? PALETTE.desk : PALETTE.wood
+      );
+      ctx.globalAlpha = 0.35;
+      ctx.fillRect(0, y, 128, 16);
+      ctx.globalAlpha = 0.75;
+      ctx.strokeStyle = seam;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(0, y + 0.5);
+      ctx.lineTo(128, y + 0.5);
+      ctx.stroke();
+      const joint = ((row % 4) * 32 + 16) % 128;
+      ctx.beginPath();
+      ctx.moveTo(joint, y);
+      ctx.lineTo(joint, y + 16);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 0.12;
+    ctx.strokeStyle = css(PALETTE.woodDark);
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 26; i += 1) {
+      const y = noise2(i * 4.7) * 128;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.bezierCurveTo(42, y + 3, 86, y - 3, 128, y);
+      ctx.stroke();
+    }
+  });
+}
+
+function noise2(seed: number): number {
+  const value = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+  return value - Math.floor(value);
+}
+
+function floorTextureCache(): Record<FloorFinish, THREE.CanvasTexture> {
+  if (!cachedFloorTextures) {
+    cachedFloorTextures = {
+      wood: makeFloorTexture("wood"),
+      carpet: makeFloorTexture("carpet"),
+      terrazzo: makeFloorTexture("terrazzo"),
+    };
+    for (const texture of Object.values(cachedFloorTextures)) {
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+    }
+  }
+  return cachedFloorTextures;
+}
+
+let cachedFloorTextures: Record<FloorFinish, THREE.CanvasTexture> | null = null;
+
+/** A cloned, repeat-fitted tile so each room keeps its own scale. */
+function floorTextureFor(kind: string, w: number, d: number): THREE.Texture {
+  const texture = floorTextureCache()[floorFinish(kind)].clone();
+  texture.needsUpdate = true;
+  texture.repeat.set(Math.max(0.5, w), Math.max(0.5, d));
+  return texture;
+}
+
+/** A name card the size of the one a building hangs beside a door. */
+function makePlaqueTexture(
+  label: string,
+  accent: string,
+  locked: boolean
+): THREE.CanvasTexture {
+  return makeCanvasTexture(256, 72, (ctx) => {
+    ctx.clearRect(0, 0, 256, 72);
+    ctx.fillStyle = PAPER_CSS;
+    roundRect(ctx, 4, 6, 248, 60, 10);
+    ctx.fill();
+    ctx.strokeStyle = locked ? "#7f1d3a" : accent;
+    ctx.lineWidth = 3;
+    roundRect(ctx, 4, 6, 248, 60, 10);
     ctx.stroke();
+    ctx.fillStyle = INK_CSS;
+    ctx.font = "800 26px Lato, Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, 128, 30);
+    ctx.fillStyle = accent;
+    ctx.fillRect(88, 50, 80, 4);
+    if (locked) {
+      ctx.fillStyle = "#7f1d3a";
+      ctx.fillRect(18, 26, 12, 14);
+      ctx.strokeStyle = "#7f1d3a";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(24, 26, 5, Math.PI, 0);
+      ctx.stroke();
+    }
   });
 }
 
@@ -449,8 +638,9 @@ export class OfficeEngine {
   }
 
   /**
-   * The tower is seen from the street, so it gets a daylight sky; the floor is
-   * an interior and keeps the dark ambience the rooms were lit for.
+   * The tower is seen from the street, so it gets a daylight sky. The floor is
+   * a lit interior: the backdrop is the light coming off cream plaster and a
+   * waxed wood floor, and the fog only has to soften the far end of a corridor.
    */
   private applyBackdrop(view: "floor" | "tower") {
     if (view === "tower") {
@@ -458,8 +648,8 @@ export class OfficeEngine {
       this.scene.fog = new THREE.Fog(0xd3e6f7, 90, 260);
       return;
     }
-    this.scene.background = new THREE.Color(0x080a13);
-    this.scene.fog = new THREE.Fog(0x080a13, 58, 120);
+    this.scene.background = new THREE.Color(INTERIOR_BACKDROP);
+    this.scene.fog = new THREE.Fog(INTERIOR_BACKDROP, 90, 230);
   }
 
   private createSkyTexture(): THREE.Texture {
@@ -551,6 +741,8 @@ export class OfficeEngine {
   private furnitureItems: FurnitureItem[] = [];
   private labelSprites: THREE.Sprite[] = [];
   private floorLights: THREE.PointLight[] = [];
+  /** Where the downlights were placed, so a short walk does not rebuild them. */
+  private lightsAnchor = { x: 0, z: 0 };
   private selectedId: string | null = null;
   private selectionHelper: THREE.BoxHelper | null = null;
 
@@ -655,8 +847,8 @@ export class OfficeEngine {
     this.container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x080a13);
-    this.scene.fog = new THREE.Fog(0x080a13, 58, 120);
+    this.scene.background = new THREE.Color(INTERIOR_BACKDROP);
+    this.scene.fog = new THREE.Fog(INTERIOR_BACKDROP, 58, 150);
 
     this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, 240);
     this.camera.position.copy(this.cameraPosition);
@@ -1042,7 +1234,12 @@ export class OfficeEngine {
   }
 
   private addLights() {
-    const hemi = new THREE.HemisphereLight(0xdbe4ff, 0x1a1430, 1.7);
+    // A lit office: daylight bouncing off cream plaster above, warm oak below.
+    const hemi = new THREE.HemisphereLight(
+      PALETTE.lightWarm,
+      PALETTE.wood,
+      2.3
+    );
     this.scene.add(hemi);
 
     // Every storey has its own footprint, so aim the sun at whatever floor is
@@ -1069,7 +1266,9 @@ export class OfficeEngine {
     sun.shadow.bias = -0.0004;
     this.scene.add(sun);
 
-    const fill = new THREE.DirectionalLight(0x8b5cf6, 0.55);
+    // The opposite side of the room has to be readable from the camera, so
+    // the fill is neutral daylight rather than the brand purple.
+    const fill = new THREE.DirectionalLight(PALETTE.screen, 0.45);
     fill.position.set(center.x - 24, 18, center.z + 22);
     fill.target.position.set(center.x, 0, center.z);
     this.scene.add(fill.target);
@@ -1077,13 +1276,16 @@ export class OfficeEngine {
 
     if (this.isLive) return;
 
+    // Downlights over the parts of the demo plan people actually stand in.
     const points: Array<[number, number, number, number, number, number]> = [
-      [8.5, 2.4, 5, 0x8b5cf6, 16, 18],
-      [9, 2.4, 19, 0xf59e0b, 12, 16],
-      [23.5, 2.4, 6.5, 0x22d3ee, 10, 14],
-      [6.5, 2.4, 30.5, 0x60a5fa, 8, 12],
-      [17.5, 2.4, 30.5, 0xf472b6, 8, 12],
-      [28.5, 2.4, 30.5, 0x34d399, 8, 12],
+      [8.5, 2.6, 5, PALETTE.lightWarm, 20, 22],
+      [9, 2.6, 19, PALETTE.glow, 16, 20],
+      [23.5, 2.6, 6.5, PALETTE.lightWarm, 14, 18],
+      [6.5, 2.6, 30.5, PALETTE.lightWarm, 12, 16],
+      [17.5, 2.6, 30.5, PALETTE.lightWarm, 12, 16],
+      [28.5, 2.6, 30.5, PALETTE.lightWarm, 12, 16],
+      [49, 2.6, 20, PALETTE.glow, 14, 18],
+      [50, 2.6, 31, PALETTE.glow, 14, 18],
     ];
     for (const [x, y, z, color, intensity, distance] of points) {
       const light = new THREE.PointLight(color, intensity, distance, 2);
@@ -1093,16 +1295,21 @@ export class OfficeEngine {
   }
 
   private addGround() {
-    const grid = new THREE.GridHelper(160, 160, 0x2a2f52, 0x171b2e);
+    const grid = new THREE.GridHelper(
+      160,
+      160,
+      PALETTE.slabTint,
+      PALETTE.stone
+    );
     grid.position.set(28, -0.12, 18);
     (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.55;
+    (grid.material as THREE.Material).opacity = 0.3;
     this.staticGroup.add(grid);
 
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(170, 140),
       new THREE.MeshStandardMaterial({
-        color: 0x090b15,
+        color: PALETTE.site,
         roughness: 1,
         metalness: 0,
       })
@@ -1114,7 +1321,7 @@ export class OfficeEngine {
 
     const plinth = new THREE.Mesh(
       new THREE.BoxGeometry(64, 0.22, 44),
-      new THREE.MeshStandardMaterial({ color: 0x111423, roughness: 0.85 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.stone, roughness: 0.85 })
     );
     plinth.position.set(28, -0.11, 18);
     plinth.receiveShadow = true;
@@ -1123,9 +1330,9 @@ export class OfficeEngine {
     const glow = new THREE.Mesh(
       new THREE.RingGeometry(38, 39, 96),
       new THREE.MeshBasicMaterial({
-        color: 0x6d4aff,
+        color: PALETTE.accent,
         transparent: true,
-        opacity: 0.18,
+        opacity: 0.14,
       })
     );
     glow.rotation.x = -Math.PI / 2;
@@ -1135,12 +1342,12 @@ export class OfficeEngine {
 
   private addShell() {
     const outer = new THREE.MeshStandardMaterial({
-      color: 0x1a1f36,
-      roughness: 0.78,
-      metalness: 0.08,
+      color: PALETTE.wallShade,
+      roughness: 0.85,
+      metalness: 0.02,
     });
     const trim = new THREE.MeshStandardMaterial({
-      color: 0x2a3152,
+      color: PALETTE.frame,
       roughness: 0.6,
       metalness: 0.2,
     });
@@ -1157,11 +1364,11 @@ export class OfficeEngine {
     this.addWallBox(55.8, 22, 0.4, 28, outer);
     this.addWallBox(50, 35.8, 12, 0.4, outer);
 
-    // A glowing strip that reads as a facade light.
+    // A cove of light where the wall meets the ceiling.
     const strip = new THREE.MeshStandardMaterial({
-      color: 0x6d4aff,
-      emissive: 0x6d4aff,
-      emissiveIntensity: 1.4,
+      color: PALETTE.glow,
+      emissive: PALETTE.glow,
+      emissiveIntensity: 1.6,
       roughness: 0.4,
     });
     this.addWallBox(22, 0.35, 43.4, 0.06, strip, 0.06, false, 2.55);
@@ -1190,19 +1397,21 @@ export class OfficeEngine {
 
   private addInteriorWalls() {
     const wall = new THREE.MeshStandardMaterial({
-      color: 0xe8eaf3,
-      roughness: 0.92,
+      color: PALETTE.wall,
+      roughness: 0.94,
+      metalness: 0,
     });
     const wallDark = new THREE.MeshStandardMaterial({
-      color: 0xc3c8db,
+      color: PALETTE.wallShade,
       roughness: 0.9,
+      metalness: 0,
     });
     const glass = new THREE.MeshPhysicalMaterial({
-      color: 0x9fd7ff,
+      color: PALETTE.screen,
       transparent: true,
-      opacity: 0.2,
-      roughness: 0.1,
-      metalness: 0.1,
+      opacity: 0.22,
+      roughness: 0.08,
+      metalness: 0.05,
       side: THREE.DoubleSide,
     });
 
@@ -1224,8 +1433,8 @@ export class OfficeEngine {
 
     // Focus pod partitions (low enough to see over).
     const pod = new THREE.MeshStandardMaterial({
-      color: 0x2d3a4a,
-      roughness: 0.7,
+      color: PALETTE.slabTint,
+      roughness: 0.95,
     });
     for (const z of [14.2, 24.4]) {
       this.addWallBox(23.1, z, 7, 0.18, pod, 1.15);
@@ -1264,9 +1473,9 @@ export class OfficeEngine {
 
   private addFloors() {
     const corridor = new THREE.MeshStandardMaterial({
-      color: 0x111524,
-      roughness: 0.88,
-      metalness: 0.05,
+      color: PALETTE.stone,
+      roughness: 0.72,
+      metalness: 0.04,
     });
     const corridorAreas: Array<[number, number, number, number]> = [
       [22, 13.55, 44, 1.1],
@@ -1284,16 +1493,13 @@ export class OfficeEngine {
     }
 
     for (const room of ROOMS) {
-      const texture = makeGridTexture(room.floor, "#ffffff");
-      texture.wrapS = THREE.RepeatWrapping;
-      texture.wrapT = THREE.RepeatWrapping;
-      texture.repeat.set(room.bounds.w / 2, room.bounds.d / 2);
+      const texture = floorTextureFor(room.kind, room.bounds.w, room.bounds.d);
       const material = new THREE.MeshStandardMaterial({
         map: texture,
-        roughness: 0.92,
-        metalness: 0.03,
+        roughness: 0.85,
+        metalness: 0.02,
         emissive: new THREE.Color(room.accent),
-        emissiveIntensity: 0.035,
+        emissiveIntensity: 0.02,
       });
       const floor = new THREE.Mesh(
         new THREE.BoxGeometry(room.bounds.w, 0.1, room.bounds.d),
@@ -1328,7 +1534,7 @@ export class OfficeEngine {
 
   private addDoorFrames() {
     const frame = new THREE.MeshStandardMaterial({
-      color: 0x2c3354,
+      color: PALETTE.woodDark,
       roughness: 0.55,
       metalness: 0.25,
     });
@@ -1448,9 +1654,9 @@ export class OfficeEngine {
     // Reception
     this.addReceptionDesk(8.5, 4.1);
     this.addCounter(14, 7.4);
-    this.addSofa(3.1, 9.1, 90, 0x4b5a8a);
+    this.addSofa(3.1, 9.1, 90, PALETTE.sofa);
     this.addCoffeeTable(4.9, 9.1);
-    this.addRug(9, 8.2, 5, 3.4, 0x3a2c5f);
+    this.addRug(9, 8.2, 5, 3.4, PALETTE.accent);
     this.addPlant(2.4, 2.4);
     this.addPlant(15.2, 2.4);
     this.addPlant(2.4, 11.6);
@@ -1461,22 +1667,22 @@ export class OfficeEngine {
     this.addWhiteboard(23.5, 2.2, 0);
     this.addPlant(19.1, 2.8);
     this.addPlant(27.9, 2.8);
-    this.addRug(23.5, 6.8, 6, 4, 0x1d3448);
+    this.addRug(23.5, 6.8, 6, 4, PALETTE.slabTint);
 
     // Meeting B
     this.addMeetingTable(36.5, 6.8);
     this.addScreen(36.5, 2.2, 0);
     this.addPlant(32.1, 2.8);
     this.addPlant(40.9, 2.8);
-    this.addRug(36.5, 6.8, 6, 4, 0x1d3448);
+    this.addRug(36.5, 6.8, 6, 4, PALETTE.sofa);
 
     // Lounge
-    this.addRug(9, 19, 10, 5, 0x4a3320);
-    this.addSofa(4.2, 18.9, 90, 0x5b4a7a);
-    this.addSofa(13.8, 18.9, 270, 0x5b4a7a);
+    this.addRug(9, 19, 10, 5, PALETTE.pot);
+    this.addSofa(4.2, 18.9, 90, PALETTE.sofa);
+    this.addSofa(13.8, 18.9, 270, PALETTE.sofa);
     this.addCoffeeTable(9, 19);
-    this.addBeanbag(6.6, 22.2, 0xe879a7);
-    this.addBeanbag(11.4, 22.2, 0x7c5cff);
+    this.addBeanbag(6.6, 22.2, PALETTE.accent);
+    this.addBeanbag(11.4, 22.2, PALETTE.glow);
     this.addPlant(2.5, 14.9);
     this.addPlant(16.9, 14.9);
     this.addPlant(16.9, 23.2);
@@ -1499,19 +1705,19 @@ export class OfficeEngine {
     this.addWhiteboard(2.15, 30.6, 90);
     this.addPlant(2.6, 27.2);
     this.addPlant(10.6, 27.2);
-    this.addRug(6.5, 30.6, 6.6, 4.2, 0x1e3550);
+    this.addRug(6.5, 30.6, 6.6, 4.2, PALETTE.slabTint);
 
     this.addMeetingTable(17.5, 30.6);
     this.addWhiteboard(22.15, 30.6, 270);
     this.addPlant(13.4, 27.2);
     this.addPlant(22.2, 27.2);
-    this.addRug(17.5, 30.6, 6.6, 4.2, 0x3a1f37);
+    this.addRug(17.5, 30.6, 6.6, 4.2, PALETTE.sofa);
 
     this.addMeetingTable(28.5, 30.6);
     this.addScreen(33.15, 30.6, 270);
     this.addPlant(24.4, 27.2);
     this.addPlant(33.2, 27.2);
-    this.addRug(28.5, 30.6, 6.6, 4.2, 0x1b3a2c);
+    this.addRug(28.5, 30.6, 6.6, 4.2, PALETTE.accent);
 
     // Marketing stays empty behind the locked door.
     this.addPlant(35.2, 27.2);
@@ -1550,7 +1756,7 @@ export class OfficeEngine {
     this.refreshFloorLights();
   }
 
-  /** Warm accent lights follow the rooms on the storey that is being shown. */
+  /** Warm downlights follow the rooms on the storey that is being shown. */
   private refreshFloorLights() {
     for (const light of this.floorLights) {
       this.scene.remove(light);
@@ -1558,21 +1764,49 @@ export class OfficeEngine {
     }
     this.floorLights = [];
     if (!this.isLive) return;
-    for (const room of this.rooms.slice(0, 8)) {
+
+    // A renderer with thirty point lights drops to a slideshow, so the lights
+    // are placed around where the person actually stands and the rest of the
+    // floor is carried by the hemisphere and sun.
+    const origin = this.playerPosition;
+    this.lightsAnchor = { x: origin.x, z: origin.z };
+    const nearest = [...this.rooms]
+      .map((room) => {
+        const cx = room.bounds.x + room.bounds.w / 2;
+        const cz = room.bounds.z + room.bounds.d / 2;
+        return { room, distance: Math.hypot(cx - origin.x, cz - origin.z) };
+      })
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 9);
+
+    for (const { room } of nearest) {
+      const b = room.bounds;
+      // A 5 by 5.4 office needs a third of the throw of a 16 by 6 lounge.
+      const area = b.w * b.d;
       const light = new THREE.PointLight(
-        new THREE.Color(room.accent).getHex(),
-        6,
-        14,
+        PALETTE.lightWarm,
+        clamp(3 + area * 0.12, 4, 9),
+        clamp(Math.sqrt(area) * 2.1, 6, 16),
         2
       );
-      light.position.set(
-        room.bounds.x + room.bounds.w / 2,
-        2.4,
-        room.bounds.z + room.bounds.d / 2
-      );
+      light.position.set(b.x + b.w / 2, 2.35, b.z + b.d / 2);
       this.scene.add(light);
       this.floorLights.push(light);
     }
+  }
+
+  /**
+   * The downlights are placed around where the person stands, so the set has
+   * to move with them. Rebuilding costs a shader recompile, so a short walk
+   * inside the same wing is left alone.
+   */
+  private updateFloorLights() {
+    if (!this.isLive) return;
+    const walked = Math.hypot(
+      this.playerPosition.x - this.lightsAnchor.x,
+      this.playerPosition.z - this.lightsAnchor.z
+    );
+    if (walked >= 7) this.refreshFloorLights();
   }
 
   private addLiveGround() {
@@ -1581,18 +1815,18 @@ export class OfficeEngine {
     const grid = new THREE.GridHelper(
       Math.ceil(span) + 16,
       Math.ceil(span) + 16,
-      0x2a2f52,
-      0x171b2e
+      PALETTE.slabTint,
+      PALETTE.stone
     );
     grid.position.set(cx, -0.12, cz);
     (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.4;
+    (grid.material as THREE.Material).opacity = 0.28;
     this.staticGroup.add(grid);
 
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(this.planWidth + 30, this.planDepth + 30),
       new THREE.MeshStandardMaterial({
-        color: 0x090b15,
+        color: PALETTE.site,
         roughness: 1,
         metalness: 0,
       })
@@ -1604,7 +1838,7 @@ export class OfficeEngine {
 
     const plinth = new THREE.Mesh(
       new THREE.BoxGeometry(this.planWidth + 6, 0.22, this.planDepth + 6),
-      new THREE.MeshStandardMaterial({ color: 0x111423, roughness: 0.85 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.stone, roughness: 0.85 })
     );
     plinth.position.set(cx, -0.11, cz);
     plinth.receiveShadow = true;
@@ -1617,30 +1851,29 @@ export class OfficeEngine {
       const cx = b.x + b.w / 2;
       const cz = b.z + b.d / 2;
 
-      const texture = makeGridTexture(room.floor, "#ffffff");
-      texture.wrapS = THREE.RepeatWrapping;
-      texture.wrapT = THREE.RepeatWrapping;
-      texture.repeat.set(Math.max(1, b.w / 2), Math.max(1, b.d / 2));
+      const texture = floorTextureFor(room.kind, b.w, b.d);
       const floor = new THREE.Mesh(
         new THREE.BoxGeometry(b.w, 0.1, b.d),
         new THREE.MeshStandardMaterial({
           map: texture,
-          roughness: 0.9,
-          metalness: 0.03,
+          roughness: 0.85,
+          metalness: 0.02,
           emissive: new THREE.Color(room.accent),
-          emissiveIntensity: 0.05,
+          emissiveIntensity: 0.02,
         })
       );
       floor.position.set(cx, 0.05, cz);
       floor.receiveShadow = true;
       this.buildingGroup.add(floor);
 
+      // A thin inlay keeps the room's own colour identity without lighting
+      // the whole floor up in brand purple.
       const edge = new THREE.Mesh(
         new THREE.BoxGeometry(b.w + 0.08, 0.02, b.d + 0.08),
         new THREE.MeshBasicMaterial({
           color: new THREE.Color(room.accent),
           transparent: true,
-          opacity: 0.45,
+          opacity: 0.32,
         })
       );
       edge.position.set(cx, 0.005, cz);
@@ -1650,17 +1883,40 @@ export class OfficeEngine {
 
   private addLiveWalls() {
     const wall = new THREE.MeshStandardMaterial({
-      color: 0x3a4260,
-      roughness: 0.82,
-      metalness: 0.08,
+      color: PALETTE.wall,
+      roughness: 0.94,
+      metalness: 0,
     });
-    const height = 1.15;
+    const jamb = new THREE.MeshStandardMaterial({
+      color: PALETTE.woodDark,
+      roughness: 0.62,
+      metalness: 0.06,
+    });
+    const glass = new THREE.MeshPhysicalMaterial({
+      color: PALETTE.screen,
+      transparent: true,
+      opacity: 0.24,
+      roughness: 0.08,
+      metalness: 0.05,
+      side: THREE.DoubleSide,
+    });
+    const lamp = new THREE.MeshStandardMaterial({
+      color: PALETTE.lightWarm,
+      emissive: PALETTE.lightWarm,
+      emissiveIntensity: 1.7,
+      roughness: 0.5,
+    });
     const thickness = 0.14;
+    const doorHead = 2.1;
 
     for (const room of this.rooms) {
       const b = room.bounds;
       const cx = b.x + b.w / 2;
       const cz = b.z + b.d / 2;
+      // A private office has a door you can shut; the open zones only get a
+      // waist-high partition so the floor still reads as one plan.
+      const closed = isClosedRoom(room.kind);
+      const height = closed ? BUILDING.wallHeight : 1.15;
       // Every room opens onto the corridor on its south edge.
       const doorway = Math.min(1.7, Math.max(1, b.w * 0.42));
       const segment = (b.w - doorway) / 2;
@@ -1668,13 +1924,17 @@ export class OfficeEngine {
       this.addWallBox(cx, b.z, b.w, thickness, wall, height);
       this.addWallBox(b.x, cz, thickness, b.d, wall, height);
       this.addWallBox(b.x + b.w, cz, thickness, b.d, wall, height);
+
       if (segment > 0.08) {
+        // The wood around a doorway is what makes a room look entered, not
+        // cut into. Open zones keep the plaster.
+        const side = closed ? jamb : wall;
         this.addWallBox(
           b.x + segment / 2,
           b.z + b.d,
           segment,
           thickness,
-          wall,
+          side,
           height
         );
         this.addWallBox(
@@ -1682,22 +1942,74 @@ export class OfficeEngine {
           b.z + b.d,
           segment,
           thickness,
-          wall,
+          side,
           height
         );
       }
 
-      const accent = new THREE.Mesh(
-        new THREE.BoxGeometry(Math.max(0.5, b.w - 0.4), 0.045, 0.055),
-        new THREE.MeshStandardMaterial({
-          color: new THREE.Color(room.accent),
-          emissive: new THREE.Color(room.accent),
-          emissiveIntensity: 1.1,
-          roughness: 0.4,
-        })
+      if (closed) {
+        // The band over the door is glazed: a wing of forty closed offices is
+        // still a bright building, and you can see who is at their desk.
+        const head = Math.max(0.3, height - doorHead);
+        this.addWallBox(
+          cx,
+          b.z + b.d,
+          doorway,
+          thickness,
+          wall,
+          head,
+          false,
+          doorHead + head / 2
+        );
+        const pane = new THREE.Mesh(
+          new THREE.BoxGeometry(
+            doorway * 0.88,
+            Math.min(0.42, head * 0.6),
+            0.05
+          ),
+          glass
+        );
+        pane.position.set(
+          cx,
+          doorHead + Math.min(0.42, head * 0.6) / 2 + 0.02,
+          b.z + b.d + 0.09
+        );
+        this.buildingGroup.add(pane);
+        // A dark threshold keeps the opening readable from the corridor.
+        const mat = new THREE.Mesh(
+          new THREE.BoxGeometry(doorway, 0.02, 0.5),
+          new THREE.MeshStandardMaterial({
+            color: PALETTE.slab,
+            roughness: 1,
+          })
+        );
+        mat.position.set(cx, 0.11, b.z + b.d);
+        this.buildingGroup.add(mat);
+      } else {
+        const accent = new THREE.Mesh(
+          new THREE.BoxGeometry(Math.max(0.5, b.w - 0.4), 0.045, 0.055),
+          new THREE.MeshStandardMaterial({
+            color: new THREE.Color(room.accent),
+            emissive: new THREE.Color(room.accent),
+            emissiveIntensity: 0.8,
+            roughness: 0.4,
+          })
+        );
+        accent.position.set(cx, height + 0.03, b.z + thickness / 2);
+        this.buildingGroup.add(accent);
+      }
+
+      // The fitting every lit room is expected to have, just under the head.
+      const strip = new THREE.Mesh(
+        new THREE.BoxGeometry(
+          Math.min(1.7, b.w * 0.5),
+          0.05,
+          Math.min(0.32, b.d * 0.16)
+        ),
+        lamp
       );
-      accent.position.set(cx, height + 0.03, b.z + thickness / 2);
-      this.buildingGroup.add(accent);
+      strip.position.set(cx, height - 0.09, cz);
+      this.buildingGroup.add(strip);
     }
   }
 
@@ -1714,11 +2026,13 @@ export class OfficeEngine {
             cz + 0.4,
             Math.min(b.w - 1.2, 6),
             Math.min(b.d - 1.2, 4),
-            0x3a2c5f
+            PALETTE.accent
           );
           this.addReceptionDesk(cx, b.z + Math.min(3.2, b.d * 0.5));
           this.addPlant(b.x + 0.9, b.z + 0.9);
           this.addPlant(b.x + b.w - 0.9, b.z + 0.9);
+          if (b.w >= 8)
+            this.addSofa(b.x + b.w - 2.1, cz + 1.2, 270, PALETTE.sofa);
           break;
         }
         case "lobby": {
@@ -1727,9 +2041,10 @@ export class OfficeEngine {
             cz,
             Math.min(b.w - 1.2, 6),
             Math.min(b.d - 1.2, 3.6),
-            0x24304f
+            PALETTE.slabTint
           );
-          this.addCoffeeTable(cx, cz);
+          this.addCounter(cx, b.z + 1.5);
+          this.addCoffeeTable(cx, cz + 0.8);
           this.addPlant(b.x + 0.9, b.z + 0.9);
           break;
         }
@@ -1739,23 +2054,29 @@ export class OfficeEngine {
             cz,
             Math.min(b.w - 1.2, 9),
             Math.min(b.d - 1.2, 5),
-            0x4a3320
+            PALETTE.pot
           );
           if (b.w >= 6) {
-            this.addSofa(b.x + 1.4, cz, 90, 0x5b4a7a);
-            this.addSofa(b.x + b.w - 1.4, cz, 270, 0x5b4a7a);
+            this.addSofa(b.x + 1.4, cz, 90, PALETTE.sofa);
+            this.addSofa(b.x + b.w - 1.4, cz, 270, PALETTE.sofa);
           }
           this.addCoffeeTable(cx, cz);
+          if (b.w >= 9) {
+            this.addBeanbag(b.x + 2.6, b.z + b.d - 1.5, PALETTE.accent);
+          }
           this.addPlant(b.x + 0.9, b.z + 0.9);
           break;
         }
         case "meeting": {
           this.addMeetingTable(cx, cz);
           if (b.d >= 5) this.addScreen(cx, b.z + 0.5, 0);
+          if (b.w >= 6) this.addWhiteboard(b.x + 0.9, cz, 90);
           break;
         }
         case "focus": {
-          this.addFocusDesk(cx, cz + 0.2);
+          // A quiet room is a desk on the window wall and a door that shuts.
+          this.addWorkstation(cx, b.z + Math.min(1.3, b.d * 0.26));
+          this.addPlant(b.x + b.w - 0.7, b.z + 0.7);
           break;
         }
         case "channel": {
@@ -1765,20 +2086,20 @@ export class OfficeEngine {
               cz,
               Math.min(b.w - 1.6, 7),
               Math.min(b.d - 1.6, 4.4),
-              0x1e3550
+              PALETTE.slabTint
             );
             this.addMeetingTable(cx, cz);
+            if (b.w >= 9 && b.d >= 5.5) {
+              this.addWorkstation(b.x + b.w - 1.7, b.z + 1.3);
+            }
           } else {
-            this.addFocusDesk(cx, cz);
+            this.addWorkstation(cx, b.z + 1.3);
           }
           this.addPlant(b.x + 0.8, b.z + 0.8);
           break;
         }
         case "personal": {
-          this.addFocusDesk(cx, b.z + Math.min(1.9, b.d * 0.42));
-          if (b.w >= 3.2) {
-            this.addPlant(b.x + 0.7, b.z + b.d - 0.8);
-          }
+          this.addPrivateOffice(room);
           break;
         }
         case "area": {
@@ -1787,9 +2108,11 @@ export class OfficeEngine {
             cz,
             Math.min(b.w - 1, 6),
             Math.min(b.d - 1, 4),
-            0x1b2030
+            PALETTE.sofa
           );
-          if (b.w >= 6) this.addSofa(b.x + 1.2, cz, 90, 0x4b5a8a);
+          if (b.w >= 6) this.addSofa(b.x + 1.2, cz, 90, PALETTE.slabTint);
+          if (b.w >= 12) this.addCoffeeTable(cx, cz);
+          if (b.w >= 12) this.addCounter(b.x + b.w - 2.4, b.z + b.d - 1.6);
           this.addPlant(b.x + b.w - 0.8, b.z + 0.8);
           break;
         }
@@ -1797,22 +2120,179 @@ export class OfficeEngine {
     }
   }
 
+  /**
+   * A private office, not a cubicle: a desk on the wall you enter against,
+   * storage, a rug and something green. A 5 by 5.4 room holds all of it and
+   * still leaves the walk-in point clear.
+   */
+  private addPrivateOffice(room: OfficeRoom) {
+    const b = room.bounds;
+    const cx = b.x + b.w / 2;
+    this.addWorkstation(cx, b.z + Math.min(1.3, b.d * 0.26));
+    this.addWallArt(cx, b.z, Math.min(1.2, b.w * 0.28));
+    if (b.w >= 4.2) this.addCabinet(b.x + 0.6, b.z + b.d - 1.3, 90);
+    if (b.d >= 4.2) {
+      this.addRug(
+        cx,
+        b.z + b.d * 0.66,
+        Math.min(b.w - 1.8, 2.6),
+        Math.min(b.d * 0.3, 1.5),
+        PALETTE.sofa
+      );
+    }
+    this.addPlant(b.x + b.w - 0.7, b.z + 0.75);
+  }
+
+  /** A desk with its screen, keyboard and chair — what an office is judged by. */
+  private addWorkstation(x: number, z: number) {
+    const group = new THREE.Group();
+    const top = new THREE.Mesh(
+      new THREE.BoxGeometry(1.9, 0.07, 0.85),
+      new THREE.MeshStandardMaterial({ color: PALETTE.wood, roughness: 0.55 })
+    );
+    top.position.y = 0.74;
+    top.castShadow = true;
+    top.receiveShadow = true;
+    group.add(top);
+
+    const steel = new THREE.MeshStandardMaterial({
+      color: PALETTE.metal,
+      metalness: 0.55,
+      roughness: 0.4,
+    });
+    for (const sx of [-0.82, 0.82]) {
+      for (const sz of [-0.3, 0.3]) {
+        const leg = new THREE.Mesh(
+          new THREE.BoxGeometry(0.07, 0.72, 0.07),
+          steel
+        );
+        leg.position.set(sx, 0.36, sz);
+        group.add(leg);
+      }
+    }
+
+    const skirt = new THREE.Mesh(
+      new THREE.BoxGeometry(1.8, 0.34, 0.04),
+      new THREE.MeshStandardMaterial({ color: PALETTE.desk, roughness: 0.8 })
+    );
+    skirt.position.set(0, 0.5, -0.34);
+    group.add(skirt);
+
+    const bezel = new THREE.Mesh(
+      new THREE.BoxGeometry(0.78, 0.48, 0.04),
+      new THREE.MeshStandardMaterial({ color: PALETTE.ink, roughness: 0.6 })
+    );
+    bezel.position.set(-0.18, 1.12, -0.24);
+    group.add(bezel);
+
+    const panel = new THREE.Mesh(
+      new THREE.BoxGeometry(0.7, 0.4, 0.02),
+      new THREE.MeshStandardMaterial({
+        color: PALETTE.screen,
+        emissive: PALETTE.screen,
+        emissiveIntensity: 1.2,
+        roughness: 0.3,
+      })
+    );
+    panel.position.set(-0.18, 1.12, -0.21);
+    group.add(panel);
+
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.04, 0.2), steel);
+    foot.position.set(-0.18, 0.79, -0.2);
+    group.add(foot);
+
+    const keyboard = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.03, 0.18),
+      new THREE.MeshStandardMaterial({
+        color: PALETTE.wallShade,
+        roughness: 0.9,
+      })
+    );
+    keyboard.position.set(-0.18, 0.79, 0.14);
+    group.add(keyboard);
+
+    // A mug on the corner: the room is lived in, not staged.
+    const mug = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.05, 0.045, 0.1, 10),
+      new THREE.MeshStandardMaterial({ color: PALETTE.pot, roughness: 0.7 })
+    );
+    mug.position.set(0.62, 0.83, -0.05);
+    group.add(mug);
+
+    group.position.set(x, 0, z);
+    this.staticGroup.add(group);
+    this.addCollider(x - 0.98, x + 0.98, z - 0.48, z + 0.48);
+    this.addChair(x, z + 0.95, 180);
+  }
+
+  /** A framed print on the wall behind a desk. */
+  private addWallArt(x: number, z: number, width: number) {
+    const frame = new THREE.Mesh(
+      new THREE.BoxGeometry(width, width * 0.68, 0.05),
+      new THREE.MeshStandardMaterial({
+        color: PALETTE.woodDark,
+        roughness: 0.6,
+      })
+    );
+    frame.position.set(x, 1.66, z + 0.13);
+    this.staticGroup.add(frame);
+
+    const print = new THREE.Mesh(
+      new THREE.BoxGeometry(width * 0.84, width * 0.54, 0.02),
+      new THREE.MeshStandardMaterial({
+        color: PALETTE.site,
+        emissive: PALETTE.screen,
+        emissiveIntensity: 0.14,
+        roughness: 0.9,
+      })
+    );
+    print.position.set(x, 1.66, z + 0.16);
+    this.staticGroup.add(print);
+  }
+
+  /**
+   * A closed room is named on the wall beside its door, the way a building
+   * does it. An open zone has no wall to hang anything on, so its name stays
+   * on its own floor — on a paper card, because white text on cream oak is
+   * unreadable.
+   */
   private addLiveRoomLabels() {
     for (const room of this.rooms) {
       const b = room.bounds;
+      const cx = b.x + b.w / 2;
       const label =
-        room.name.length > 18 ? `${room.name.slice(0, 17)}\u2026` : room.name;
+        room.name.length > 20 ? `${room.name.slice(0, 19)}\u2026` : room.name;
+
+      if (isClosedRoom(room.kind)) {
+        const texture = makePlaqueTexture(label, room.accent, room.locked);
+        const width = clamp(b.w * 0.76, 1.1, 2.2);
+        const plaque = new THREE.Mesh(
+          new THREE.PlaneGeometry(width, width * (72 / 256)),
+          new THREE.MeshBasicMaterial({
+            map: texture,
+            transparent: true,
+            depthWrite: false,
+          })
+        );
+        plaque.position.set(cx, BUILDING.wallHeight - 0.2, b.z + b.d + 0.11);
+        this.buildingGroup.add(plaque);
+        continue;
+      }
+
       const texture = makeCanvasTexture(512, 160, (ctx) => {
         ctx.clearRect(0, 0, 512, 160);
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "800 54px Lato, Arial, sans-serif";
+        ctx.globalAlpha = 0.78;
+        ctx.fillStyle = PAPER_CSS;
+        roundRect(ctx, 36, 38, 440, 84, 20);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = INK_CSS;
+        ctx.font = "800 46px Lato, Arial, sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.globalAlpha = 0.92;
         ctx.fillText(label, 256, 80);
-        ctx.globalAlpha = 0.55;
         ctx.fillStyle = room.accent;
-        ctx.fillRect(186, 122, 140, 5);
+        ctx.fillRect(196, 108, 120, 5);
       });
       const width = clamp(b.w * 0.82, 1.5, 4.8);
       const mesh = new THREE.Mesh(
@@ -1820,12 +2300,12 @@ export class OfficeEngine {
         new THREE.MeshBasicMaterial({
           map: texture,
           transparent: true,
-          opacity: 0.85,
+          opacity: 0.9,
           depthWrite: false,
         })
       );
       mesh.rotation.x = -Math.PI / 2;
-      mesh.position.set(b.x + b.w / 2, 0.075, b.z + b.d * 0.62);
+      mesh.position.set(cx, 0.075, b.z + b.d * 0.62);
       this.buildingGroup.add(mesh);
     }
   }
@@ -1977,6 +2457,23 @@ export class OfficeEngine {
   }
 
   private isBlocked(x: number, z: number, radius = 0.34): boolean {
+    // A locked office is a real door: the room is visible in the building, but
+    // walking through its doorway is refused. This is the client-side mirror
+    // of the server's access rule, so the user never steps into a room the
+    // enter endpoint will reject.
+    for (const room of this.allRooms) {
+      if (!room.locked || (room.floorIndex ?? 0) !== this.activeFloor) continue;
+      const bounds = room.bounds;
+      if (
+        x > bounds.x + radius &&
+        x < bounds.x + bounds.w - radius &&
+        z > bounds.z + radius &&
+        z < bounds.z + bounds.d - radius
+      ) {
+        return true;
+      }
+    }
+
     const inside = this.walkBounds.some(
       (area) =>
         x >= area.minX + radius &&
@@ -2203,7 +2700,7 @@ export class OfficeEngine {
         }
         add(
           new THREE.CylinderGeometry(0.025, 0.035, 0.45, 8),
-          new THREE.MeshStandardMaterial({ color: 0x3f6b4d }),
+          new THREE.MeshStandardMaterial({ color: PALETTE.slabTint }),
           0,
           0.48,
           0
@@ -2937,9 +3434,9 @@ export class OfficeEngine {
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(4, 1.05, 1.2),
       new THREE.MeshStandardMaterial({
-        color: 0x2a2450,
-        roughness: 0.55,
-        metalness: 0.1,
+        color: PALETTE.counter,
+        roughness: 0.6,
+        metalness: 0.05,
       })
     );
     body.position.y = 0.55;
@@ -2948,9 +3445,9 @@ export class OfficeEngine {
     const top = new THREE.Mesh(
       new THREE.BoxGeometry(4.2, 0.08, 1.35),
       new THREE.MeshStandardMaterial({
-        color: 0x8b5cf6,
-        roughness: 0.4,
-        metalness: 0.2,
+        color: PALETTE.stone,
+        roughness: 0.35,
+        metalness: 0.1,
       })
     );
     top.position.y = 1.11;
@@ -2958,9 +3455,9 @@ export class OfficeEngine {
     const glow = new THREE.Mesh(
       new THREE.BoxGeometry(3.6, 0.04, 0.04),
       new THREE.MeshStandardMaterial({
-        color: 0xa78bfa,
-        emissive: 0xa78bfa,
-        emissiveIntensity: 2,
+        color: PALETTE.glow,
+        emissive: PALETTE.glow,
+        emissiveIntensity: 1.6,
       })
     );
     glow.position.set(0, 0.72, 0.62);
@@ -2978,7 +3475,7 @@ export class OfficeEngine {
     const group = new THREE.Group();
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(2.4, 1.0, 0.8),
-      new THREE.MeshStandardMaterial({ color: 0x202642, roughness: 0.6 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.counter, roughness: 0.6 })
     );
     body.position.y = 0.5;
     body.castShadow = true;
@@ -2986,9 +3483,9 @@ export class OfficeEngine {
     const top = new THREE.Mesh(
       new THREE.BoxGeometry(2.55, 0.08, 0.95),
       new THREE.MeshStandardMaterial({
-        color: 0x3b4569,
+        color: PALETTE.stone,
         roughness: 0.35,
-        metalness: 0.3,
+        metalness: 0.12,
       })
     );
     top.position.y = 1.04;
@@ -3002,7 +3499,7 @@ export class OfficeEngine {
     const group = new THREE.Group();
     const top = new THREE.Mesh(
       new THREE.BoxGeometry(2.8, 0.1, 1.4),
-      new THREE.MeshStandardMaterial({ color: 0xd9ddec, roughness: 0.5 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.wood, roughness: 0.5 })
     );
     top.position.y = 0.76;
     top.castShadow = true;
@@ -3012,7 +3509,7 @@ export class OfficeEngine {
         const leg = new THREE.Mesh(
           new THREE.BoxGeometry(0.08, 0.72, 0.08),
           new THREE.MeshStandardMaterial({
-            color: 0x2b2f45,
+            color: PALETTE.metal,
             metalness: 0.6,
             roughness: 0.4,
           })
@@ -3024,9 +3521,9 @@ export class OfficeEngine {
     const glow = new THREE.Mesh(
       new THREE.BoxGeometry(1.5, 0.02, 0.03),
       new THREE.MeshStandardMaterial({
-        color: 0x22d3ee,
-        emissive: 0x22d3ee,
-        emissiveIntensity: 1.4,
+        color: PALETTE.accent,
+        emissive: PALETTE.accent,
+        emissiveIntensity: 1.1,
       })
     );
     glow.position.set(0, 0.82, 0);
@@ -3047,13 +3544,13 @@ export class OfficeEngine {
     const group = new THREE.Group();
     const seat = new THREE.Mesh(
       new THREE.BoxGeometry(0.46, 0.07, 0.46),
-      new THREE.MeshStandardMaterial({ color: 0x3b4569, roughness: 0.9 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.slab, roughness: 0.9 })
     );
     seat.position.y = 0.45;
     group.add(seat);
     const back = new THREE.Mesh(
       new THREE.BoxGeometry(0.46, 0.5, 0.07),
-      new THREE.MeshStandardMaterial({ color: 0x3b4569, roughness: 0.9 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.slab, roughness: 0.9 })
     );
     back.position.set(0, 0.72, -0.2);
     group.add(back);
@@ -3061,7 +3558,10 @@ export class OfficeEngine {
       for (const sz of [-0.18, 0.18]) {
         const leg = new THREE.Mesh(
           new THREE.BoxGeometry(0.04, 0.44, 0.04),
-          new THREE.MeshStandardMaterial({ color: 0x222538, metalness: 0.5 })
+          new THREE.MeshStandardMaterial({
+            color: PALETTE.metal,
+            metalness: 0.5,
+          })
         );
         leg.position.set(sx, 0.22, sz);
         group.add(leg);
@@ -3111,7 +3611,7 @@ export class OfficeEngine {
     const group = new THREE.Group();
     const top = new THREE.Mesh(
       new THREE.BoxGeometry(1.6, 0.08, 0.8),
-      new THREE.MeshStandardMaterial({ color: 0x7a563c, roughness: 0.7 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.desk, roughness: 0.7 })
     );
     top.position.y = 0.4;
     top.castShadow = true;
@@ -3120,7 +3620,10 @@ export class OfficeEngine {
       for (const sz of [-0.28, 0.28]) {
         const leg = new THREE.Mesh(
           new THREE.BoxGeometry(0.06, 0.38, 0.06),
-          new THREE.MeshStandardMaterial({ color: 0x2b2f45, metalness: 0.6 })
+          new THREE.MeshStandardMaterial({
+            color: PALETTE.metal,
+            metalness: 0.6,
+          })
         );
         leg.position.set(sx, 0.19, sz);
         group.add(leg);
@@ -3154,12 +3657,12 @@ export class OfficeEngine {
     const group = new THREE.Group();
     const pot = new THREE.Mesh(
       new THREE.CylinderGeometry(0.2, 0.15, 0.38, 14),
-      new THREE.MeshStandardMaterial({ color: 0x5a3d2b, roughness: 0.9 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.pot, roughness: 0.9 })
     );
     pot.position.y = 0.19;
     group.add(pot);
     const leafMat = new THREE.MeshStandardMaterial({
-      color: 0x3b9b6d,
+      color: PALETTE.leaf,
       roughness: 0.85,
     });
     for (let i = 0; i < 6; i += 1) {
@@ -3178,7 +3681,7 @@ export class OfficeEngine {
     }
     const stem = new THREE.Mesh(
       new THREE.CylinderGeometry(0.025, 0.035, 0.5, 8),
-      new THREE.MeshStandardMaterial({ color: 0x3f6b4d })
+      new THREE.MeshStandardMaterial({ color: PALETTE.woodDark })
     );
     stem.position.y = 0.48;
     group.add(stem);
@@ -3211,7 +3714,7 @@ export class OfficeEngine {
     const group = new THREE.Group();
     const frame = new THREE.Mesh(
       new THREE.BoxGeometry(0.9, 1.8, 0.35),
-      new THREE.MeshStandardMaterial({ color: 0x7a563c, roughness: 0.8 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.desk, roughness: 0.8 })
     );
     frame.position.y = 0.9;
     frame.castShadow = true;
@@ -3242,7 +3745,7 @@ export class OfficeEngine {
     const group = new THREE.Group();
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(1.6, 1.0, 0.45),
-      new THREE.MeshStandardMaterial({ color: 0x252b47, roughness: 0.6 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.desk, roughness: 0.6 })
     );
     body.position.y = 0.5;
     body.castShadow = true;
@@ -3250,7 +3753,7 @@ export class OfficeEngine {
     const top = new THREE.Mesh(
       new THREE.BoxGeometry(1.7, 0.06, 0.52),
       new THREE.MeshStandardMaterial({
-        color: 0x3b4569,
+        color: PALETTE.wood,
         metalness: 0.3,
         roughness: 0.4,
       })
@@ -3267,22 +3770,22 @@ export class OfficeEngine {
     const group = new THREE.Group();
     const base = new THREE.Mesh(
       new THREE.CylinderGeometry(0.16, 0.2, 0.06, 16),
-      new THREE.MeshStandardMaterial({ color: 0x2b2f45, metalness: 0.5 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.metal, metalness: 0.5 })
     );
     base.position.y = 0.03;
     group.add(base);
     const pole = new THREE.Mesh(
       new THREE.CylinderGeometry(0.035, 0.035, 1.6, 10),
-      new THREE.MeshStandardMaterial({ color: 0x2b2f45, metalness: 0.5 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.metal, metalness: 0.5 })
     );
     pole.position.y = 0.82;
     group.add(pole);
     const shade = new THREE.Mesh(
       new THREE.ConeGeometry(0.3, 0.32, 20, 1, true),
       new THREE.MeshStandardMaterial({
-        color: 0xf4c46a,
-        emissive: 0xf4c46a,
-        emissiveIntensity: 0.9,
+        color: PALETTE.glow,
+        emissive: PALETTE.glow,
+        emissiveIntensity: 1.2,
         side: THREE.DoubleSide,
       })
     );
@@ -3298,13 +3801,13 @@ export class OfficeEngine {
     const group = new THREE.Group();
     const board = new THREE.Mesh(
       new THREE.BoxGeometry(2, 1.2, 0.08),
-      new THREE.MeshStandardMaterial({ color: 0xf0f2fa, roughness: 0.5 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.wall, roughness: 0.5 })
     );
     board.position.y = 1.45;
     group.add(board);
     const tray = new THREE.Mesh(
       new THREE.BoxGeometry(2.1, 0.05, 0.12),
-      new THREE.MeshStandardMaterial({ color: 0x2b2f45, metalness: 0.5 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.metal, metalness: 0.5 })
     );
     tray.position.y = 0.82;
     group.add(tray);
@@ -3331,9 +3834,9 @@ export class OfficeEngine {
     const panel = new THREE.Mesh(
       new THREE.BoxGeometry(1.8, 1.05, 0.09),
       new THREE.MeshStandardMaterial({
-        color: 0x0f1320,
-        emissive: 0x2b2a66,
-        emissiveIntensity: 0.7,
+        color: PALETTE.ink,
+        emissive: PALETTE.screen,
+        emissiveIntensity: 0.35,
       })
     );
     panel.position.y = 1.45;
@@ -3341,8 +3844,8 @@ export class OfficeEngine {
     const image = new THREE.Mesh(
       new THREE.BoxGeometry(0.9, 0.5, 0.03),
       new THREE.MeshStandardMaterial({
-        color: 0x60a5fa,
-        emissive: 0x60a5fa,
+        color: PALETTE.screen,
+        emissive: PALETTE.screen,
         emissiveIntensity: 1.1,
       })
     );
@@ -3358,14 +3861,14 @@ export class OfficeEngine {
     const group = new THREE.Group();
     const top = new THREE.Mesh(
       new THREE.BoxGeometry(1.8, 0.08, 0.8),
-      new THREE.MeshStandardMaterial({ color: 0xd9ddec, roughness: 0.55 })
+      new THREE.MeshStandardMaterial({ color: PALETTE.wood, roughness: 0.55 })
     );
     top.position.y = 0.74;
     group.add(top);
     for (const sx of [-0.75, 0.75]) {
       const leg = new THREE.Mesh(
         new THREE.BoxGeometry(0.07, 0.7, 0.07),
-        new THREE.MeshStandardMaterial({ color: 0x2b2f45, metalness: 0.6 })
+        new THREE.MeshStandardMaterial({ color: PALETTE.metal, metalness: 0.6 })
       );
       leg.position.set(sx, 0.35, 0);
       group.add(leg);
@@ -3373,9 +3876,9 @@ export class OfficeEngine {
     const divider = new THREE.Mesh(
       new THREE.BoxGeometry(1.8, 0.7, 0.06),
       new THREE.MeshStandardMaterial({
-        color: 0x34d399,
+        color: PALETTE.slabTint,
         transparent: true,
-        opacity: 0.35,
+        opacity: 0.9,
       })
     );
     divider.position.set(0, 1.15, -0.42);
@@ -3853,6 +4356,7 @@ export class OfficeEngine {
     this.updateMarker();
     this.updateRoomCheck();
     this.updateProximity();
+    this.updateFloorLights();
 
     if (performance.now() - this.lastPresencePush > 180) {
       this.lastPresencePush = performance.now();
