@@ -320,8 +320,6 @@ export default function OfficeDemo({
   // Rooms whose real conversation has already been read, so re-entering a room
   // does not refetch what is already on screen.
   const historyRef = useRef(new Set<string>());
-  // Full office occupants for the engine (includes avatar, displayName, etc.)
-  const officeOccupantsRef = useRef<OfficeOccupant[]>([]);
 
   const currentRoom = roomId ? (roomById[roomId] ?? null) : null;
   const currentItems = currentRoom ? (layouts[currentRoom.id] ?? []) : [];
@@ -342,27 +340,52 @@ export default function OfficeDemo({
     if (source.mode === "demo") {
       return demoTowerOffices(rooms, presence);
     }
-    const byRoom = new Map(presence.map((point) => [point.roomId, point]));
-    return rooms
-      .filter((room) => room.kind === "personal" || room.kind === "channel")
-      .map((room) => {
-        const personal = room.kind === "personal";
-        const here = personal ? byRoom.get(room.id) : undefined;
-        return {
-          roomId: room.id,
-          floorIndex: room.floorIndex ?? 0,
-          name: room.name,
-          kind: room.kind,
-          // The office belongs to the person it is named after; presence only
-          // decides whether their light is on.
-          occupantName: personal ? room.name : undefined,
-          present: Boolean(here),
-          status: here?.status ?? (personal ? "away" : undefined),
-          // Their own avatar colour when we know it, the room's otherwise.
-          tint: here?.tint ?? room.accent,
-        };
-      });
-  }, [source.mode, rooms, presence]);
+
+    // The tower is a directory of the whole organisation. The member roster
+    // carries every person and the office they sit in, so the building shows
+    // the real team even for offices this requester cannot walk into.
+    const presenceByUser = new Map(presence.map((point) => [point.id, point]));
+    const people: TowerOffice[] = source.members.map((member) => {
+      const here = presenceByUser.get(member.userId);
+      return {
+        roomId: member.roomId,
+        floorIndex: member.floorIndex,
+        name: member.displayName,
+        kind: "personal",
+        occupantName: member.displayName,
+        present: member.online || Boolean(here),
+        status: here?.status ?? member.status,
+        tint: member.tint || undefined,
+        avatarUrl: member.avatarUrl || undefined,
+        interactive: member.canVisit || member.userId === selfId,
+        isSelf: member.userId === selfId,
+      };
+    });
+
+    const sharedKinds = new Set([
+      "channel",
+      "reception",
+      "lounge",
+      "meeting",
+      "focus",
+      "lobby",
+    ]);
+    const shared: TowerOffice[] = rooms
+      .filter(
+        (room) => (room.floorIndex ?? 0) === 0 && sharedKinds.has(room.kind)
+      )
+      .map((room) => ({
+        roomId: room.id,
+        floorIndex: 0,
+        name: room.name,
+        kind: room.kind,
+        present: true,
+        tint: room.accent,
+        interactive: !room.locked,
+      }));
+
+    return [...shared, ...people];
+  }, [source.mode, source.members, rooms, presence, selfId]);
   const isShared = Boolean(currentRoom && currentRoom.kind !== "personal");
   const canEdit = Boolean(
     currentRoom &&
@@ -378,7 +401,9 @@ export default function OfficeDemo({
       .filter((agent) => agent.roomId === roomId)
       .map(
         (agent) =>
-          DEMO_USERS.find((user) => user.id === agent.id)?.name ?? agent.id
+          agent.name ??
+          DEMO_USERS.find((user) => user.id === agent.id)?.name ??
+          agent.id
       )
       .slice(0, 6);
   }, [presence, roomId]);
@@ -799,12 +824,10 @@ export default function OfficeDemo({
   // Presence is merged rather than replaced: the room snapshot and the
   // realtime stream both carry the same people.
   const mergePresence = useCallback((occupants: OfficeOccupant[]) => {
-    // Keep full data for the engine
-    officeOccupantsRef.current = occupants;
-
     // Convert to PresencePoint for the HUD
     const points: PresencePoint[] = occupants.map((occ) => ({
       id: occ.userId,
+      name: occ.displayName || occ.username || "Someone",
       x: occ.position?.x ?? 0,
       z: occ.position?.z ?? 0,
       roomId: occ.roomId,
@@ -813,6 +836,9 @@ export default function OfficeDemo({
     }));
 
     setPresence(points);
+    // The engine draws the room's real people. It drops the signed-in person
+    // itself, because that avatar is the one the player is already steering.
+    engineRef.current?.setOccupants(occupants);
   }, []);
 
   // The live office listens for real presence over Centrifugo. Presence is
@@ -857,12 +883,6 @@ export default function OfficeDemo({
       source.leaveRoom(roomId);
     };
   }, [source, phase, roomId]);
-
-  // Wire the roster to the engine so real colleagues appear as avatars.
-  useEffect(() => {
-    if (source.mode !== "live" || phase !== "office") return;
-    engineRef.current?.setOccupants(officeOccupantsRef.current);
-  }, [source, phase, officeOccupantsRef.current]);
 
   // A room being read is a room whose conversation matters: the one you are
   // standing in, or the one held in frame from the street.
@@ -1023,6 +1043,13 @@ export default function OfficeDemo({
     const engine = engineRef.current;
     if (!engine) return;
 
+    const target = roomById[targetId];
+    if (target?.locked) {
+      engine.pulseOffice(targetId, floorIndex);
+      showInfo("Locked office", target.description);
+      return;
+    }
+
     setLiftTarget(floorIndex);
     schedule(() => {
       engine.setView("floor");
@@ -1061,7 +1088,22 @@ export default function OfficeDemo({
     const engine = engineRef.current;
     if (!engine) return;
 
-    const walkable = rooms.some((room) => room.id === office.roomId);
+    const target = roomById[office.roomId];
+    const walkable = Boolean(target);
+
+    // Reading a locked office is not allowed either: its conversation is the
+    // private DM, and the server refuses to serve it. Show the door and leave
+    // it closed instead of opening an empty chat that cannot send.
+    if (target?.locked) {
+      engine.pulseOffice(office.roomId, office.floorIndex);
+      engine.focusTowerRoom(office.roomId);
+      setTowerHover(office);
+      setTowerFocus(office.floorIndex);
+      setTowerPreview(null);
+      setChatOpen(false);
+      showInfo("Locked office", target.description);
+      return;
+    }
 
     // Second click on the same office: go in. The first click only reads it.
     if (walkable && towerPreview === office.roomId) {
@@ -1121,10 +1163,17 @@ export default function OfficeDemo({
     onTowerPick: ({ roomId: picked, floorIndex }) => {
       const engine = engineRef.current;
       if (!engine) return;
-      if (!rooms.some((room) => room.id === picked)) {
+      const room = roomById[picked];
+      if (!room) {
         // A directory-only office: keep the tower open on its storey.
         engine.pulseOffice(picked, floorIndex);
         setTowerFocus(floorIndex);
+        return;
+      }
+      if (room.locked) {
+        engine.pulseOffice(picked, floorIndex);
+        setTowerFocus(floorIndex);
+        showInfo("Locked office", room.description);
         return;
       }
       engine.setView("floor");
@@ -1675,7 +1724,12 @@ export default function OfficeDemo({
     const room = roomById[id];
     if (!room) return;
     if (room.locked) {
-      showError("Locked room", room.description);
+      showError(
+        room.kind === "personal" ? "Private office" : "Locked room",
+        room.kind === "personal"
+          ? `${room.name} keeps their own door. Say hello in the conversation instead.`
+          : room.description
+      );
       return;
     }
     const engine = engineRef.current;
@@ -1842,6 +1896,7 @@ export default function OfficeDemo({
             messages={currentMessages}
             onSend={sendChat}
             onClose={() => setChatOpen(false)}
+            live={source.mode === "live"}
           />
 
           {editorActive && currentRoom && canEdit && (
@@ -1923,6 +1978,7 @@ export default function OfficeDemo({
           open={chatOpen}
           room={roomById[towerPreview] ?? null}
           messages={messagesByRoom[towerPreview] ?? []}
+          live={source.mode === "live"}
           onSend={(text) => sendChat(text, towerPreview)}
           onClose={() => {
             setChatOpen(false);

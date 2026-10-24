@@ -15,6 +15,7 @@ import type {
   OfficeChatMessage,
   OfficeFloor,
   OfficeFurnitureItem,
+  OfficeMember,
   OfficeOccupant,
   OfficePresenceState,
   OfficeRoom,
@@ -89,12 +90,42 @@ interface RawChatRow {
   type?: string;
 }
 
+/**
+ * The 2D chat stores its threads as rich-text HTML. The office drawer draws
+ * plain text, so the markup is dropped here: block ends become line breaks and
+ * the entities the editor wrote back (`&lt;`, `&amp;`) are read as the
+ * characters they stand for.
+ */
+function plainText(value: string): string {
+  const entities: Record<string, string> = {
+    "&amp;": "&",
+    "&lt;": "<",
+    "&gt;": ">",
+    "&quot;": '"',
+    "&#39;": "'",
+    "&apos;": "'",
+    "&nbsp;": " ",
+  };
+
+  return value
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|h[1-6]|li|tr|blockquote)>/gi, "\n")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&(?:amp|lt|gt|quot|#39|apos|nbsp);/gi, (match) => {
+      return entities[match.toLowerCase()] ?? match;
+    })
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function toOfficeMessage(
   roomId: string,
   row: RawChatRow,
   selfId: string
 ): OfficeChatMessage | null {
-  const text = typeof row?.message === "string" ? row.message.trim() : "";
+  const text = typeof row?.message === "string" ? plainText(row.message) : "";
   // A row with no text is an attachment or an edited-away body: the office
   // drawer has no media renderer, so it is dropped rather than drawn empty.
   if (!row?.thread_id || !text) return null;
@@ -249,6 +280,9 @@ function buildRooms(apiRooms: OfficeApiRoom[]): OfficeRoom[] {
       refId: room.refId,
       capacity: room.capacity || template.capacity,
       locked: Boolean(room.isLocked),
+      // Only a channel or a DM-backed private office has a conversation.
+      // Shared spaces keep their 2D description instead of an empty chat.
+      chat: room.kind === "channel" || room.kind === "personal",
       description: template.description,
       ownerId: room.refId,
       floorIndex: room.floorIndex ?? 0,
@@ -281,6 +315,7 @@ export class LiveOfficeSource implements OfficeSource {
   readonly mode = "live" as const;
 
   floors: OfficeFloor[] = [];
+  members: OfficeMember[] = [];
   rooms: OfficeRoom[] = [];
   initialLayouts: Record<string, OfficeFurnitureItem[]> = {};
   initialMessages: Record<string, OfficeChatMessage[]> = {};
@@ -326,6 +361,23 @@ export class LiveOfficeSource implements OfficeSource {
 
     this.rooms = buildRooms(data.rooms ?? []);
     this.floors = data.floors ?? [];
+    // The member roster is what makes the tower a directory of people rather
+    // than a row of anonymous offices. A bootstrap from an older backend has
+    // no roster, so the rooms themselves are used as a fallback.
+    this.members =
+      data.members && data.members.length > 0
+        ? data.members
+        : this.rooms
+            .filter((room) => room.kind === "personal")
+            .map((room) => ({
+              userId: room.refId ?? room.id,
+              displayName: room.name,
+              floorIndex: room.floorIndex ?? 0,
+              roomId: room.id,
+              online: false,
+              status: "away" as const,
+              canVisit: !room.locked,
+            }));
     this.floorByRoom = Object.fromEntries(
       (data.rooms ?? []).map((room) => [room.id, room.floorIndex ?? 0])
     );
@@ -418,20 +470,24 @@ export class LiveOfficeSource implements OfficeSource {
     const channelId = this.channelIdForRoom(roomId);
     if (!channelId) return [];
 
+    // The office posts through the same endpoints the 2D chat uses. A new
+    // top-level message is a new thread; replying to an existing thread is a
+    // different route, which the office does not need.
+    const threadId = crypto.randomUUID();
     const payload = {
       content: text,
-      channels_id: channelId,
-      user_id: this.userId,
+      thread_id: threadId,
+      media: [],
     };
 
     if (roomId.startsWith("channel:")) {
       unwrap(
-        await PostRequest(`/channels/${channelId}/messages`, payload),
+        await PostRequest(`/threads/${channelId}`, payload),
         "The message was not sent."
       );
     } else if (roomId.startsWith("personal:")) {
       unwrap(
-        await PostRequest(`/dms/messages/${channelId}`, payload),
+        await PostRequest(`/dms/channels/${channelId}/threads`, payload),
         "The message was not sent."
       );
     }
@@ -591,6 +647,9 @@ export class LiveOfficeSource implements OfficeSource {
   }
 
   async fetchMessages(roomId: string): Promise<OfficeChatMessage[]> {
+    const room = this.rooms.find((candidate) => candidate.id === roomId);
+    // A locked office is visible in the tower but its conversation is not.
+    if (room?.locked) return [];
     const channelId = this.channelIdForRoom(roomId);
     if (!channelId) return [];
 
@@ -615,6 +674,8 @@ export class LiveOfficeSource implements OfficeSource {
     roomId: string,
     onMessage: (message: OfficeChatMessage) => void
   ): () => void {
+    const room = this.rooms.find((candidate) => candidate.id === roomId);
+    if (room?.locked) return () => {};
     const channelId = this.channelIdForRoom(roomId);
     if (!channelId) return () => {};
 
