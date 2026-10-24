@@ -16,6 +16,9 @@ import type {
 export type OfficeRoomKind = SceneRoom["kind"];
 export type OfficePresenceStatus = ScenePresenceStatus;
 
+/** Whether the realtime roster for the current room is connected yet. */
+export type OfficePresenceState = "connecting" | "live";
+
 /**
  * A room in the building. The scene contract lives in
  * src/app/office/_components/office-data.ts; the office API returns the same
@@ -173,7 +176,8 @@ export interface OfficeSource {
   fetchOccupants(roomId: string): Promise<OfficeOccupant[]>;
   subscribePresence(
     roomId: string,
-    onPresence: (occupants: OfficeOccupant[]) => void
+    onPresence: (occupants: OfficeOccupant[]) => void,
+    onState?: (state: OfficePresenceState) => void
   ): () => void;
 }
 
