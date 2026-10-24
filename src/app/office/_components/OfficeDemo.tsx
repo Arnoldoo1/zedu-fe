@@ -240,6 +240,9 @@ export default function OfficeDemo({
   const [activeFloor, setActiveFloor] = useState(0);
   const [towerHover, setTowerHover] = useState<TowerOffice | null>(null);
   const [liftTarget, setLiftTarget] = useState<number | null>(null);
+  // The tower is the first view inside the office, so the intro waits until
+  // the user has picked a floor and the floor plan is actually on screen.
+  const pendingOnboardingRef = useRef(false);
 
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [mapOpen, setMapOpen] = useState(true);
@@ -801,6 +804,7 @@ export default function OfficeDemo({
     setTowerOpen(false);
     setTowerHover(null);
     setLiftTarget(null);
+    showPendingOnboarding();
   }
 
   function selectFloor(floorIndex: number) {
@@ -828,6 +832,7 @@ export default function OfficeDemo({
       setTowerOpen(false);
       setTowerHover(null);
       setLiftTarget(null);
+      showPendingOnboarding();
     }, 850);
   }
 
@@ -848,6 +853,7 @@ export default function OfficeDemo({
       setTowerOpen(false);
       setTowerHover(null);
       setChatOpen(true);
+      showPendingOnboarding();
     }, 750);
   }
 
@@ -888,6 +894,7 @@ export default function OfficeDemo({
       setTowerOpen(false);
       setTowerHover(null);
       setChatOpen(true);
+      showPendingOnboarding();
     },
     onTowerHover: (office) => setTowerHover(office),
   };
@@ -1472,9 +1479,16 @@ export default function OfficeDemo({
     } catch {
       dismissed = false;
     }
-    if (!dismissed) {
-      schedule(() => setOnboardingOpen(true), 1000);
-    }
+    pendingOnboardingRef.current = !dismissed;
+    // The tower is the first view inside the office: the floor plan only
+    // appears once the user picks a storey from it.
+    openTower();
+  }
+
+  function showPendingOnboarding() {
+    if (!pendingOnboardingRef.current) return;
+    pendingOnboardingRef.current = false;
+    schedule(() => setOnboardingOpen(true), 400);
   }
 
   function exitDemo() {
