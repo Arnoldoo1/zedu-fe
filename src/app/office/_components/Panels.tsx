@@ -99,13 +99,18 @@ export function RoomDirectory({
         "pointer-events-none absolute inset-0 z-40 transition-opacity duration-200",
         open ? "opacity-100" : "opacity-0"
       )}
-      aria-hidden={!open}
+      inert={!open}
     >
       <button
         type="button"
         tabIndex={open ? 0 : -1}
         aria-label="Close room directory"
-        className="pointer-events-auto absolute inset-0 bg-black/35 backdrop-blur-[2px]"
+        className={cn(
+          "absolute inset-0 bg-black/35 backdrop-blur-[2px]",
+          // The overlay keeps its space while it fades out, so it must not keep
+          // swallowing clicks after it closes.
+          open ? "pointer-events-auto" : "pointer-events-none"
+        )}
         onClick={onClose}
       />
       <aside
@@ -327,7 +332,7 @@ export function ChatPanel({
         "pointer-events-none absolute bottom-0 right-0 top-0 z-40 flex w-[min(25rem,100vw)] items-stretch p-2 transition-transform duration-300 sm:p-3",
         open ? "translate-x-0" : "translate-x-[110%]"
       )}
-      aria-hidden={!open}
+      inert={!open}
     >
       <section className="office-glass-strong pointer-events-auto flex h-full w-full flex-col overflow-hidden rounded-2xl border-white/10">
         <div className="flex items-center gap-2.5 border-b border-white/8 px-3.5 py-3">
