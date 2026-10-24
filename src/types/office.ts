@@ -114,10 +114,32 @@ export interface OfficeSettings {
   enabled: boolean;
 }
 
+/**
+ * One person in the organisation's office directory. The tower draws every
+ * member's office from this roster, whether or not the requester may walk
+ * into that particular office.
+ */
+export interface OfficeMember {
+  userId: string;
+  displayName: string;
+  username?: string;
+  title?: string;
+  avatarUrl?: string;
+  tint?: string;
+  role?: string;
+  floorIndex: number;
+  roomId: string;
+  online: boolean;
+  status: OfficePresenceStatus;
+  statusText?: string;
+  canVisit: boolean;
+}
+
 export interface OfficeBootstrap {
   building: OfficeBuilding;
   settings: OfficeSettings;
   floors: OfficeFloor[];
+  members?: OfficeMember[];
   rooms: OfficeApiRoom[];
   layouts: Record<string, OfficeApiLayout>;
   channelRoomMap: Record<string, string>;
@@ -158,6 +180,8 @@ export interface OfficeSource {
   readonly mode: "demo" | "live";
   /** The tower directory: the general floor first, then the member floors. */
   readonly floors: OfficeFloor[];
+  /** Everyone in the organisation, with the office each one sits in. */
+  readonly members: OfficeMember[];
   readonly rooms: OfficeRoom[];
   readonly initialLayouts: Record<string, OfficeFurnitureItem[]>;
   readonly initialMessages: Record<string, OfficeChatMessage[]>;

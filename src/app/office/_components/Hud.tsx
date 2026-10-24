@@ -22,6 +22,8 @@ import { cn } from "~/lib/utils";
 
 export interface PresencePoint {
   id: string;
+  /** Their real display name, so the HUD never falls back to a UUID. */
+  name?: string;
   x: number;
   z: number;
   roomId: string;
