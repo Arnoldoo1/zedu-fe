@@ -81,6 +81,9 @@
   --office-gold: #f4c46a;
   position: fixed;
   inset: 0;
+  /* Sits above the host app chrome (header is z-40) so the office owns the
+     full viewport instead of being clipped behind it. */
+  z-index: 60;
   overflow: hidden;
   background:
     radial-gradient(
@@ -343,6 +346,11 @@
   display: flex;
   align-items: center;
   padding: 4.5rem 5vw;
+}
+
+.office-entry-scrim {
+  position: absolute;
+  inset: 0;
   background:
     linear-gradient(
       90deg,
@@ -358,6 +366,7 @@
 }
 
 .office-entry-content {
+  position: relative;
   width: min(620px, 100%);
   animation: office-fade-up 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -541,6 +550,9 @@
   .office-entry {
     align-items: flex-end;
     padding: 2rem 1.25rem 2.5rem;
+  }
+
+  .office-entry-scrim {
     background:
       linear-gradient(
         0deg,

@@ -23,14 +23,13 @@ import {
   DEMO_USER_ID,
   DEMO_USERS,
   ROOM_BY_ID,
-  roomAt,
   type AvatarConfig,
   type ChatMessage,
   type FurnitureItem,
   type PresenceStatus,
   validatePlacement,
 } from "./office-data";
-import { demoSource } from "./demo-office-source";
+import { demoSource, demoTowerOffices } from "./demo-office-source";
 import type {
   OfficeOccupant,
   OfficeSource,
@@ -42,8 +41,6 @@ import {
   type EditState,
 } from "./engine/OfficeEngine";
 
-const KEY_ONBOARDING = "office-demo-onboarding-v1";
-
 const initialPresence: PresencePoint[] = DEMO_USERS.filter(
   (user) => user.id !== "you" && !user.isZoe
 ).map((user) => ({
@@ -52,6 +49,7 @@ const initialPresence: PresencePoint[] = DEMO_USERS.filter(
   z: user.position.z,
   roomId: user.roomId,
   status: user.status,
+  tint: user.avatar.tint,
 }));
 
 const TOUR_STEPS: TourStep[] = [
@@ -203,8 +201,14 @@ const LIVE_LINES: Record<string, string[]> = {
 
 export default function OfficeDemo({
   source = demoSource,
+  self,
+  onExit,
 }: {
   source?: OfficeSource;
+  /** The signed-in person. The demo falls back to its seeded user. */
+  self?: { id: string; name: string; role?: string };
+  /** Leave the building (the live route returns to the organisation). */
+  onExit?: () => void;
 }) {
   const rooms = source.rooms;
   const roomById = useMemo(() => {
@@ -212,9 +216,19 @@ export default function OfficeDemo({
     for (const room of rooms) map[room.id] = room;
     return map;
   }, [rooms]);
-  // The tower is the first view in both the demo and the live building, so the
-  // engine opens on the cinematic orbit and the user steps inside explicitly.
-  const [phase, setPhase] = useState<"entry" | "office">("entry");
+  const selfId = self?.id ?? DEMO_USER_ID;
+  const selfName = self?.name ?? "Ada Obi";
+  const onboardingKey = `office-onboarding-v2-${source.mode}`;
+  // The live rooms come from the server, so hit testing has to use them and
+  // not the demo floor plan compiled into office-data. Only the storey the
+  // engine is showing exists in 3D, so the lookup is scoped to that floor.
+  // (Declared after activeFloor so the closure sees the current storey.)
+
+  // The demo opens on its entry screen; the live office goes straight into
+  // the building. Both land on the tower first, then step onto a storey.
+  const [phase, setPhase] = useState<"entry" | "office">(
+    source.mode === "live" ? "office" : "entry"
+  );
   // Read once: the engine is created after the first render and must know
   // whether the user is already inside the office.
   const startsInOfficeRef = useRef(phase === "office");
@@ -233,16 +247,37 @@ export default function OfficeDemo({
       rooms.find((room) => room.id === "reception")?.id ?? rooms[0]?.id ?? null
   );
   const [player, setPlayer] = useState({ x: 8.5, z: 9.4, yaw: Math.PI });
-  const [presence, setPresence] = useState<PresencePoint[]>(initialPresence);
+  const [presence, setPresence] = useState<PresencePoint[]>(
+    source.mode === "demo" ? initialPresence : []
+  );
+  const [presenceState, setPresenceState] = useState<"connecting" | "live">(
+    source.mode === "demo" ? "live" : "connecting"
+  );
   const [nearZoe, setNearZoe] = useState(false);
 
   const [towerOpen, setTowerOpen] = useState(false);
+  const [towerFocus, setTowerFocus] = useState<number | null>(null);
+  const openedInitialTowerRef = useRef(false);
   const [activeFloor, setActiveFloor] = useState(0);
+  const floorRooms = useMemo(
+    () => rooms.filter((room) => (room.floorIndex ?? 0) === activeFloor),
+    [rooms, activeFloor]
+  );
+  const findRoomAt = useCallback(
+    (x: number, z: number) =>
+      floorRooms.find(
+        (room) =>
+          x >= room.bounds.x &&
+          x <= room.bounds.x + room.bounds.w &&
+          z >= room.bounds.z &&
+          z <= room.bounds.z + room.bounds.d
+      ) ?? null,
+    [floorRooms]
+  );
   const [towerHover, setTowerHover] = useState<TowerOffice | null>(null);
   const [liftTarget, setLiftTarget] = useState<number | null>(null);
-  // The tower is the first view inside the office, so the intro waits until
-  // the user has picked a floor and the floor plan is actually on screen.
-  const pendingOnboardingRef = useRef(false);
+  /** Office held in frame from the street, with its conversation open. */
+  const [towerPreview, setTowerPreview] = useState<string | null>(null);
 
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [mapOpen, setMapOpen] = useState(true);
@@ -293,11 +328,17 @@ export default function OfficeDemo({
           (item) => item.id === selectedFurnitureId
         ) ?? null)
       : null;
-  const onlineCount = presence.length + 1;
+  // Presence rosters may already include the signed-in person; count them once.
+  const onlineCount =
+    presence.filter((point) => point.id !== selfId).length + 1;
 
   // The tower shows the people, not the rooms: an office is lit while its
-  // owner is inside it, and the search only ever matches people.
+  // owner is inside it, and the search only ever matches people. The demo
+  // adds the directory-only storeys that fill the building out to ten floors.
   const towerOffices = useMemo<TowerOffice[]>(() => {
+    if (source.mode === "demo") {
+      return demoTowerOffices(rooms, presence);
+    }
     const byRoom = new Map(presence.map((point) => [point.roomId, point]));
     return rooms
       .filter((room) => room.kind === "personal" || room.kind === "channel")
@@ -309,17 +350,21 @@ export default function OfficeDemo({
           floorIndex: room.floorIndex ?? 0,
           name: room.name,
           kind: room.kind,
-          occupantName: here ? room.name : undefined,
-          status: here?.status,
-          tint: room.accent,
+          // The office belongs to the person it is named after; presence only
+          // decides whether their light is on.
+          occupantName: personal ? room.name : undefined,
+          present: Boolean(here),
+          status: here?.status ?? (personal ? "away" : undefined),
+          // Their own avatar colour when we know it, the room's otherwise.
+          tint: here?.tint ?? room.accent,
         };
       });
-  }, [rooms, presence]);
+  }, [source.mode, rooms, presence]);
   const isShared = Boolean(currentRoom && currentRoom.kind !== "personal");
   const canEdit = Boolean(
     currentRoom &&
     !currentRoom.locked &&
-    (currentRoom.kind !== "personal" || currentRoom.ownerId === DEMO_USER_ID)
+    (currentRoom.kind !== "personal" || currentRoom.ownerId === selfId)
   );
   const currentMessages = currentRoom
     ? (messagesByRoom[currentRoom.id] ?? [])
@@ -344,7 +389,9 @@ export default function OfficeDemo({
     roomId,
     player,
     presence,
+    presenceState,
     nearZoe,
+    towerOpen,
     editorActive,
     editorCatalogId,
     editorMovingId,
@@ -369,7 +416,9 @@ export default function OfficeDemo({
     roomId,
     player,
     presence,
+    presenceState,
     nearZoe,
+    towerOpen,
     editorActive,
     editorCatalogId,
     editorMovingId,
@@ -426,6 +475,8 @@ export default function OfficeDemo({
           isLive: source.mode === "live",
           avatar: stateRef.current.avatarDraft,
           furniture: Object.values(stateRef.current.layouts).flat(),
+          rooms: source.rooms,
+          selfId,
         }
       );
       engineRef.current = engine;
@@ -456,6 +507,41 @@ export default function OfficeDemo({
   useEffect(() => {
     engineRef.current?.setCinematic(phase !== "office");
   }, [phase]);
+
+  // The entry screen sits over the building itself. Let the backdrop alternate
+  // between the tower and the floor so a visitor sees both without pressing
+  // anything.
+  useEffect(() => {
+    if (phase !== "entry" || !ready) return;
+    const engine = engineRef.current;
+    if (!engine) return;
+
+    let showTower = true;
+    engine.setView("tower");
+    engine.focusTowerFloor(null);
+
+    const timer = window.setInterval(() => {
+      showTower = !showTower;
+      if (showTower) {
+        engine.setView("tower");
+        engine.focusTowerFloor(null);
+      } else {
+        engine.setView("floor");
+        engine.setCinematic(true);
+      }
+    }, 14_000);
+
+    return () => window.clearInterval(timer);
+  }, [phase, ready]);
+
+  // The live office has no entry screen, but it still opens on the tower: the
+  // building is the front door for both routes.
+  useEffect(() => {
+    if (source.mode !== "live" || phase !== "office" || !ready) return;
+    if (openedInitialTowerRef.current) return;
+    openedInitialTowerRef.current = true;
+    openTower();
+  }, [source.mode, phase, ready, openTower]);
 
   useEffect(() => {
     engineRef.current?.setRooms(rooms);
@@ -531,6 +617,12 @@ export default function OfficeDemo({
       const state = stateRef.current;
       if (event.key === "Escape") {
         event.preventDefault();
+        // The tower owns the viewport, so Esc always brings the floor back
+        // before it starts closing panels.
+        if (state.towerOpen) {
+          closeTower();
+          return;
+        }
         closeTopLayer();
         return;
       }
@@ -585,6 +677,22 @@ export default function OfficeDemo({
     }
     setHydrated(true);
   }, [source]);
+
+  // The intro is per environment and per session: the demo and the real
+  // building explain different things, and dismissing one must not hide the
+  // other. It opens over the floor, never instead of it.
+  useEffect(() => {
+    if (phase !== "office") return;
+    let dismissed = false;
+    try {
+      dismissed = Boolean(sessionStorage.getItem(onboardingKey));
+    } catch {
+      dismissed = false;
+    }
+    if (dismissed) return;
+    const timer = window.setTimeout(() => setOnboardingOpen(true), 900);
+    return () => window.clearTimeout(timer);
+  }, [phase, onboardingKey]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -698,6 +806,7 @@ export default function OfficeDemo({
       z: occ.position?.z ?? 0,
       roomId: occ.roomId,
       status: occ.status ?? "online",
+      tint: occ.avatar?.tint,
     }));
 
     setPresence(points);
@@ -708,7 +817,11 @@ export default function OfficeDemo({
   useEffect(() => {
     if (source.mode !== "live" || phase !== "office") return;
 
-    return source.subscribePresence(roomId ?? "lobby", mergePresence);
+    return source.subscribePresence(
+      roomId ?? "lobby",
+      mergePresence,
+      setPresenceState
+    );
   }, [source, phase, roomId, mergePresence]);
 
   // The stream only carries what happens after the subscription, so the room
@@ -793,6 +906,9 @@ export default function OfficeDemo({
     if (!engine) return;
     setActiveFloor(engine.getActiveFloor());
     engine.setView("tower");
+    engine.focusTowerFloor(null);
+    setTowerFocus(null);
+    setTowerPreview(null);
     setTowerOpen(true);
     setMapOpen(false);
     setDirectoryOpen(false);
@@ -803,58 +919,109 @@ export default function OfficeDemo({
     engineRef.current?.setView("floor");
     setTowerOpen(false);
     setTowerHover(null);
+    setTowerPreview(null);
     setLiftTarget(null);
-    showPendingOnboarding();
+    setTowerFocus(null);
   }
 
+  function showWholeTower() {
+    engineRef.current?.focusTowerFloor(null);
+    setTowerFocus(null);
+    setTowerPreview(null);
+    setChatOpen(false);
+  }
+
+  /**
+   * The floor picker frames a storey; it never teleports. Going inside is a
+   * decision about one office, made by clicking it twice.
+   */
   function selectFloor(floorIndex: number) {
     const engine = engineRef.current;
     if (!engine) return;
-    if (floorIndex === engine.getActiveFloor()) {
-      closeTower();
+
+    if (towerFocus === floorIndex && floorIndex !== engine.getActiveFloor()) {
+      showWholeTower();
       return;
     }
 
-    // The lift ride covers the moment the storey is rebuilt in 3D.
+    engine.focusTowerFloor(floorIndex);
+    setTowerFocus(floorIndex);
+    setTowerPreview(null);
+    setChatOpen(false);
     setLiftTarget(floorIndex);
-    const target =
-      rooms.find(
-        (room) => (room.floorIndex ?? 0) === floorIndex && room.kind !== "area"
-      ) ?? rooms.find((room) => (room.floorIndex ?? 0) === floorIndex);
+    schedule(() => setLiftTarget(null), 850);
+  }
 
+  /**
+   * Step into an office seen from the street. The lift ride covers the moment
+   * the storey is rebuilt in 3D, and the room's last messages are spoken the
+   * moment the player lands so the place does not arrive silent.
+   */
+  function diveIntoRoom(targetId: string, floorIndex: number) {
+    const engine = engineRef.current;
+    if (!engine) return;
+
+    setLiftTarget(floorIndex);
     schedule(() => {
-      if (target) {
-        engine.setView("floor");
-        engine.focusRoom(target.id);
-        setRoomId(target.id);
-      }
+      engine.setView("floor");
+      engine.focusRoom(targetId);
+      setRoomId(targetId);
       setActiveFloor(floorIndex);
       setTowerOpen(false);
       setTowerHover(null);
+      setTowerPreview(null);
       setLiftTarget(null);
-      showPendingOnboarding();
-    }, 850);
+      setChatOpen(true);
+      speakRecent(targetId);
+    }, 750);
+  }
+
+  /** The last couple of messages of a room, said by whoever is standing in it. */
+  function speakRecent(targetId: string) {
+    const engine = engineRef.current;
+    if (!engine) return;
+    const inRoom = new Set(
+      presence
+        .filter((point) => point.roomId === targetId)
+        .map((point) => point.id)
+    );
+    for (const message of (messagesByRoom[targetId] ?? []).slice(-3)) {
+      if (message.self || !inRoom.has(message.userId)) continue;
+      engine.showBubble(message.userId, message.text);
+    }
   }
 
   function pickTowerPerson(office: TowerOffice) {
     const engine = engineRef.current;
     if (!engine) return;
 
-    // Light the office first, so the tower shows where the person is before
-    // the camera dives into their floor.
-    engine.pulseOffice(office.roomId, office.floorIndex);
-    setTowerHover(office);
+    const walkable = rooms.some((room) => room.id === office.roomId);
 
-    schedule(() => {
-      engine.setView("floor");
-      engine.focusRoom(office.roomId);
-      setRoomId(office.roomId);
-      setActiveFloor(office.floorIndex);
-      setTowerOpen(false);
-      setTowerHover(null);
-      setChatOpen(true);
-      showPendingOnboarding();
-    }, 750);
+    // Second click on the same office: go in. The first click only reads it.
+    if (walkable && towerPreview === office.roomId) {
+      diveIntoRoom(office.roomId, office.floorIndex);
+      return;
+    }
+
+    // First click: hold this one office in frame and open its conversation.
+    // Reading a room from the street is not entering it, so the player stays
+    // where they are and no room is joined.
+    engine.pulseOffice(office.roomId, office.floorIndex);
+    engine.focusTowerRoom(office.roomId);
+    setTowerHover(office);
+    setTowerFocus(office.floorIndex);
+    setLiftTarget(office.floorIndex);
+    schedule(() => setLiftTarget(null), 850);
+
+    if (!walkable) {
+      // A directory office on a storey the plan does not have yet.
+      setTowerPreview(null);
+      setChatOpen(false);
+      return;
+    }
+
+    setTowerPreview(office.roomId);
+    setChatOpen(true);
   }
 
   handlersRef.current = {
@@ -886,15 +1053,21 @@ export default function OfficeDemo({
       showInfo("Can't walk there", "Try a clear path or a doorway.");
     },
     onTowerPick: ({ roomId: picked, floorIndex }) => {
-      if (!rooms.some((room) => room.id === picked)) return;
-      engineRef.current?.setView("floor");
-      engineRef.current?.focusRoom(picked);
+      const engine = engineRef.current;
+      if (!engine) return;
+      if (!rooms.some((room) => room.id === picked)) {
+        // A directory-only office: keep the tower open on its storey.
+        engine.pulseOffice(picked, floorIndex);
+        setTowerFocus(floorIndex);
+        return;
+      }
+      engine.setView("floor");
+      engine.focusRoom(picked);
       setRoomId(picked);
       setActiveFloor(floorIndex);
       setTowerOpen(false);
       setTowerHover(null);
       setChatOpen(true);
-      showPendingOnboarding();
     },
     onTowerHover: (office) => setTowerHover(office),
   };
@@ -940,7 +1113,7 @@ export default function OfficeDemo({
     const room = state.roomId ? roomById[state.roomId] : null;
     const catalogId = state.editorCatalogId;
     if (!room || !catalogId) return;
-    const hovered = roomAt(x, z);
+    const hovered = findRoomAt(x, z);
     if (!hovered || hovered.id !== room.id) {
       showError("Can't place there", "That spot is outside this room.");
       return;
@@ -981,7 +1154,7 @@ export default function OfficeDemo({
     const items = state.layouts[room.id] ?? [];
     const item = items.find((entry) => entry.id === id);
     if (!item) return;
-    const hovered = roomAt(x, z);
+    const hovered = findRoomAt(x, z);
     if (!hovered || hovered.id !== room.id) {
       showError("Can't move there", "That spot is outside this room.");
       return;
@@ -1183,7 +1356,7 @@ export default function OfficeDemo({
       showError("Locked room", room.description);
       return;
     }
-    if (room.kind === "personal" && room.ownerId !== DEMO_USER_ID) {
+    if (room.kind === "personal" && room.ownerId !== selfId) {
       showError("Read-only office", "Only the owner can furnish this office.");
       return;
     }
@@ -1268,15 +1441,16 @@ export default function OfficeDemo({
     }));
   }
 
-  function sendChat(text: string) {
+  function sendChat(text: string, overrideRoomId?: string) {
     const state = stateRef.current;
-    const room = state.roomId ? roomById[state.roomId] : null;
+    const id = overrideRoomId ?? state.roomId;
+    const room = id ? roomById[id] : null;
     if (!room) return;
     appendMessage({
       id: `me-${Date.now()}`,
       roomId: room.id,
-      userId: DEMO_USER_ID,
-      name: "Ada Obi",
+      userId: selfId,
+      name: selfName,
       text,
       at: Date.now(),
       self: true,
@@ -1334,7 +1508,7 @@ export default function OfficeDemo({
   function dismissOnboarding() {
     setOnboardingOpen(false);
     try {
-      sessionStorage.setItem(KEY_ONBOARDING, "1");
+      sessionStorage.setItem(onboardingKey, "1");
     } catch {
       // Ignore.
     }
@@ -1344,9 +1518,10 @@ export default function OfficeDemo({
     setOnboardingOpen(false);
     setPhase("office");
     setTourStep(0);
+    engineRef.current?.setView("floor");
     engineRef.current?.setCinematic(false);
     try {
-      sessionStorage.setItem(KEY_ONBOARDING, "1");
+      sessionStorage.setItem(onboardingKey, "1");
     } catch {
       // Ignore.
     }
@@ -1473,34 +1648,27 @@ export default function OfficeDemo({
     if (!ready) return;
     setPhase("office");
     engineRef.current?.setCinematic(false);
-    let dismissed = false;
-    try {
-      dismissed = Boolean(sessionStorage.getItem(KEY_ONBOARDING));
-    } catch {
-      dismissed = false;
-    }
-    pendingOnboardingRef.current = !dismissed;
-    // The tower is the first view inside the office: the floor plan only
-    // appears once the user picks a storey from it.
+    // The tower is the front door: enter the building by choosing a storey.
     openTower();
   }
 
-  function showPendingOnboarding() {
-    if (!pendingOnboardingRef.current) return;
-    pendingOnboardingRef.current = false;
-    schedule(() => setOnboardingOpen(true), 400);
-  }
-
+  /**
+   * Leaving the office means going back to where the conversations live, not
+   * to another screen of the same building. The live route knows its
+   * organisation; the demo has no session to return to, so it goes home.
+   */
   function exitDemo() {
-    setPhase("entry");
-    setOnboardingOpen(false);
+    if (onExit) {
+      onExit();
+      return;
+    }
     setTourStep(null);
     setChatOpen(false);
     setZoeOpen(false);
     setAvatarOpen(false);
     setDirectoryOpen(false);
     closeEditor();
-    engineRef.current?.setCinematic(true);
+    router.push("/");
   }
 
   function closeTopLayer() {
@@ -1559,16 +1727,21 @@ export default function OfficeDemo({
         />
       )}
 
-      {phase === "office" && (
+      {phase === "office" && !towerOpen && (
         <>
           <Hud
             room={currentRoom}
-            rooms={rooms}
+            rooms={floorRooms}
             onlineCount={onlineCount}
+            presenceState={source.mode === "live" ? presenceState : "live"}
             currentRoomId={roomId}
             player={player}
             presence={presence}
             avatar={avatar}
+            selfName={selfName}
+            selfRole={
+              self?.role ?? (source.mode === "demo" ? "Product Designer" : "")
+            }
             nearZoe={nearZoe}
             unread={unread}
             chatOpen={chatOpen}
@@ -1578,6 +1751,7 @@ export default function OfficeDemo({
             onToggleMap={() => setMapOpen((value) => !value)}
             onOpenDirectory={openDirectory}
             onOpenAvatar={openAvatar}
+            onOpenTower={openTower}
             onToggleChat={toggleChat}
             onToggleEditor={toggleEditor}
             onHelp={help}
@@ -1585,29 +1759,6 @@ export default function OfficeDemo({
             onNavigate={navigateToRoom}
             onInteract={openZoe}
           />
-
-          {!towerOpen && (
-            <button
-              type="button"
-              onClick={openTower}
-              className="absolute right-4 top-24 z-20 rounded-xl border border-violet-400/25 bg-[#0b0f1c]/90 px-3 py-2 text-xs font-medium text-violet-100/90 shadow-lg backdrop-blur transition hover:border-violet-300/50 hover:bg-violet-500/20"
-            >
-              The tower
-            </button>
-          )}
-
-          {towerOpen && (
-            <TowerView
-              floors={source.floors ?? []}
-              offices={towerOffices}
-              currentFloor={activeFloor}
-              liftTarget={liftTarget}
-              hovered={towerHover}
-              onSelectFloor={selectFloor}
-              onClose={closeTower}
-              onPickPerson={pickTowerPerson}
-            />
-          )}
 
           <RoomDirectory
             open={directoryOpen}
@@ -1666,6 +1817,8 @@ export default function OfficeDemo({
 
           <Onboarding
             open={onboardingOpen}
+            name={selfName}
+            mode={source.mode}
             onClose={dismissOnboarding}
             onTour={startTour}
           />
@@ -1681,6 +1834,37 @@ export default function OfficeDemo({
             />
           )}
         </>
+      )}
+
+      {phase === "office" && towerOpen && (
+        <TowerView
+          floors={source.floors ?? []}
+          offices={towerOffices}
+          currentFloor={activeFloor}
+          focusedFloor={towerFocus}
+          liftTarget={liftTarget}
+          hovered={towerHover}
+          onSelectFloor={selectFloor}
+          onShowTower={showWholeTower}
+          onClose={closeTower}
+          onLeave={exitDemo}
+          onPickPerson={pickTowerPerson}
+        />
+      )}
+
+      {phase === "office" && towerOpen && towerPreview && (
+        <ChatPanel
+          open={chatOpen}
+          room={roomById[towerPreview] ?? null}
+          messages={messagesByRoom[towerPreview] ?? []}
+          onSend={(text) => sendChat(text, towerPreview)}
+          onClose={() => {
+            setChatOpen(false);
+            setTowerPreview(null);
+            engineRef.current?.focusTowerFloor(null);
+            setTowerFocus(null);
+          }}
+        />
       )}
 
       <ZoeDialog
