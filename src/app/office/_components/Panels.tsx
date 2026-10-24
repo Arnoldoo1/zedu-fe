@@ -270,7 +270,11 @@ function RoomRow({
           )}
         </span>
         <span className="mt-0.5 block truncate text-[0.62rem] font-medium text-[#77809a]">
-          {room.locked ? "Join the channel in Zedu to enter" : room.description}
+          {room.locked
+            ? room.kind === "personal"
+              ? "A colleague's office · you can walk up to the door"
+              : "Join the channel in Zedu to enter"
+            : room.description}
         </span>
       </span>
       <span className="flex shrink-0 items-center gap-1 text-[0.6rem] font-bold text-[#8f98b2]">
@@ -294,12 +298,15 @@ export function ChatPanel({
   messages,
   onSend,
   onClose,
+  live = false,
 }: {
   open: boolean;
   room: OfficeRoom | null;
   messages: ChatMessage[];
   onSend: (text: string) => void;
   onClose: () => void;
+  /** Live office rooms mirror the real Zedu conversation; the demo does not. */
+  live?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
@@ -359,7 +366,7 @@ export function ChatPanel({
           </div>
           <span className="hidden items-center gap-1 rounded-full border border-[#34d399]/20 bg-[#34d399]/10 px-2 py-1 text-[0.55rem] font-extrabold uppercase tracking-wider text-[#86efac] sm:flex">
             <span className="h-1.5 w-1.5 rounded-full bg-[#34d399]" />
-            live
+            {live ? "synced" : "live"}
           </span>
           <button
             type="button"
@@ -384,7 +391,9 @@ export function ChatPanel({
                 <p className="mt-0.5">
                   {room.kind === "personal"
                     ? "This is the DM with the office owner. Guests read along; the owner furnishes."
-                    : `Messages here are the existing ${room.name} messages, filtered to this room.`}
+                    : live
+                      ? `This is the real ${room.name} channel. New messages appear here as they are sent.`
+                      : `Messages here are the existing ${room.name} messages, filtered to this room.`}
                 </p>
               </div>
               {messages.map((message) => (
@@ -421,7 +430,9 @@ export function ChatPanel({
                 </button>
               </div>
               <p className="mt-1.5 text-[0.55rem] font-semibold uppercase tracking-[0.12em] text-[#5f6880]">
-                Demo · messages stay in this browser
+                {live
+                  ? "Live · sent to the same conversation as the 2D chat"
+                  : "Demo · messages stay in this browser"}
               </p>
             </form>
           </>

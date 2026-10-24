@@ -20,7 +20,10 @@ export default function LiveOfficePage() {
   const router = useRouter();
   const orgId = state?.orgId ?? "";
   const orgSlug = state?.orgSlug ?? "";
-  const userId = state?.user?.id ?? state?.user?.user_id ?? "";
+  // Presence and room ownership are keyed by the account id. The session's
+  // `id` can be a profile id, so prefer `user_id`, the same field the 2D client
+  // sends with every message.
+  const userId = state?.user?.user_id ?? state?.user?.id ?? "";
   const officeEnabled = useOfficeStatus(orgSlug);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);

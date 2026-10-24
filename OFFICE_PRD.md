@@ -104,6 +104,7 @@ Rules that follow from them:
 2. **No overlay-first presentation.** Full-screen or edge-to-edge panels that cover the floor, modal-first flows and stacked chrome are defects, not features. UI is in-world or a thin HUD; anything that hides the room needs an explicit exception in this document.
 3. **The tower must earn its place.** A tower view ships only if it tells the user where people and rooms are faster than the floor view does. A decorative tower that intercepts the first click, or a lift/floor picker that hides the floor, is out of scope until it clears that bar.
 4. **Judge presentation in the running app**, against the deployed build and the previous version — not in isolation.
+5. **The building is lit.** The interior reads as an office at working hours — plaster walls, warm floor finishes, ceiling downlights and glazed door heads — not a dark shell carrying neon trim. A private office is a room with a door you can shut, not a cubicle. The tower seen from the street and the floor walked from inside are one building and take their colours from one place (`src/app/office/_components/engine/palette.ts`); a colour that exists in only one of the two views is a defect.
 
 Every office change is reviewed against this PRD. If a change contradicts it, update the PRD in the same PR and state why.
 

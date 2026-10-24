@@ -210,6 +210,18 @@ export function demoTowerOffices(
 export const demoSource: OfficeSource = {
   mode: "demo",
   floors: demoTowerFloors(),
+  members: DEMO_USERS.filter((user) => !user.isZoe).map((user) => ({
+    userId: user.id,
+    displayName: user.name,
+    username: user.username,
+    title: user.role,
+    tint: user.avatar.tint,
+    floorIndex: 1,
+    roomId: user.roomId,
+    online: user.status !== "away",
+    status: user.status,
+    canVisit: true,
+  })),
   rooms: ROOMS as unknown as OfficeRoom[],
   initialLayouts: {},
   initialMessages: {},
