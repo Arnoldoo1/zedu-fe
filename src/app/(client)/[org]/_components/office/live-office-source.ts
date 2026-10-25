@@ -7,6 +7,7 @@ import {
   prepareChannelSubscription,
   releaseChannelSubscription,
 } from "~/lib/centrifugo/shared-centrifuge";
+import { createZoeRequest } from "~/lib/zoe/request-contract";
 import type {
   OfficeApiItem,
   OfficeApiRoom,
@@ -505,15 +506,7 @@ export class LiveOfficeSource implements OfficeSource {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({
-        messages: [{ role: "user", content: question }],
-        context: {
-          location: "office",
-          buildingId: this.orgId,
-          room: context.room,
-          nearbyUsers: context.nearbyUsers,
-        },
-      }),
+      body: JSON.stringify(createZoeRequest(question, context, this.orgId)),
     });
 
     if (!response.ok) {
