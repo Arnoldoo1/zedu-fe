@@ -59,6 +59,7 @@ export interface FurnitureItem {
   z: number;
   rotation: 0 | 90 | 180 | 270;
   variant?: string;
+  roomId?: string;
 }
 
 export interface CatalogItem {

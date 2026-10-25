@@ -1289,6 +1289,7 @@ export default function OfficeDemo({
     }
     const item: FurnitureItem = {
       id: `f-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      roomId: room.id,
       catalogId,
       x,
       z,
