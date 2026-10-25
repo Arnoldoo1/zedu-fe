@@ -539,7 +539,59 @@ export const FURNITURE_CATALOG: CatalogItem[] = [
     color: "#e879a7",
     blurb: "For the 3pm dip.",
   },
+  {
+    id: "armchair",
+    name: "Armchair",
+    category: "Lounge",
+    footprint: { w: 1, d: 1 },
+    rotatable: true,
+    collision: true,
+    maxPerRoom: 4,
+    color: "#c38a64",
+    blurb: "A deep seat for reading or a call.",
+  },
+  {
+    id: "coffee_bar",
+    name: "Coffee bar",
+    category: "Lounge",
+    footprint: { w: 2, d: 1 },
+    rotatable: true,
+    collision: true,
+    maxPerRoom: 1,
+    color: "#88684c",
+    blurb: "Espresso machine and a row of mugs.",
+  },
+  {
+    id: "cabinet",
+    name: "Filing cabinet",
+    category: "Work",
+    footprint: { w: 1, d: 1 },
+    rotatable: true,
+    collision: true,
+    maxPerRoom: 3,
+    color: "#9aa4ac",
+    blurb: "Three drawers for the paperwork.",
+  },
+  {
+    id: "art_easel",
+    name: "Art easel",
+    category: "Decor",
+    footprint: { w: 1, d: 1 },
+    rotatable: true,
+    collision: true,
+    maxPerRoom: 2,
+    color: "#ffe7bd",
+    blurb: "A framed print to make it yours.",
+  },
 ];
+
+/** Furniture you can sit on, and how high its seat is. */
+export const SEAT_HEIGHT: Record<string, number> = {
+  chair_ergo: 0.5,
+  sofa: 0.6,
+  beanbag: 0.42,
+  armchair: 0.48,
+};
 
 export const CATALOG_BY_ID: Record<string, CatalogItem> = Object.fromEntries(
   FURNITURE_CATALOG.map((item) => [item.id, item])

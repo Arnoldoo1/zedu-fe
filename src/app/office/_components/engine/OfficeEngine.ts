@@ -6,6 +6,7 @@ import {
   FURNITURE_CATALOG,
   ROOM_BY_ID,
   ROOMS,
+  SEAT_HEIGHT,
   type AvatarConfig,
   type DemoUser,
   type FurnitureItem,
@@ -441,6 +442,9 @@ export class OfficeEngine {
   private path: Array<{ x: number; z: number }> = [];
   private pathIndex = 0;
   private lastInputAt = 0;
+  /** The seat the player is sitting on, and the one they are walking to. */
+  private seated: THREE.Object3D | null = null;
+  private pendingSeat: THREE.Object3D | null = null;
 
   private playerRig: AvatarRig | null = null;
   private playerStatus: PresenceStatus = "online";
@@ -2128,19 +2132,29 @@ export class OfficeEngine {
   private addPrivateOffice(room: OfficeRoom) {
     const b = room.bounds;
     const cx = b.x + b.w / 2;
-    this.addWorkstation(cx, b.z + Math.min(1.3, b.d * 0.26));
-    this.addWallArt(cx, b.z, Math.min(1.2, b.w * 0.28));
-    if (b.w >= 4.2) this.addCabinet(b.x + 0.6, b.z + b.d - 1.3, 90);
-    if (b.d >= 4.2) {
+    const roomy = b.w >= 4.2 && b.d >= 4.2;
+    // A furnished office: the desk stands out in the room on its own rug,
+    // with a full bookshelf, a reading lamp and a plant along the back wall.
+    const deskZ = b.z + (roomy ? Math.min(1.9, b.d * 0.36) : 1.3);
+    if (roomy) {
       this.addRug(
         cx,
-        b.z + b.d * 0.66,
-        Math.min(b.w - 1.8, 2.6),
-        Math.min(b.d * 0.3, 1.5),
-        PALETTE.sofa
+        deskZ + 0.5,
+        Math.min(b.w - 1.4, 2.8),
+        Math.min(b.d * 0.4, 2.1),
+        PALETTE.accent,
+        // The room's floor pad is 0.1 thick; the rug lies on top of it.
+        0.1
       );
     }
-    this.addPlant(b.x + b.w - 0.7, b.z + 0.75);
+    this.addWorkstation(cx, deskZ);
+    this.addWallArt(cx, b.z, Math.min(1.2, b.w * 0.28));
+    if (roomy) {
+      this.addShelf(b.x + 1.25, b.z + 0.32, 0);
+      this.addLamp(b.x + b.w - 0.6, b.z + 0.6);
+      this.addCabinet(b.x + 0.6, b.z + b.d - 1.3, 90);
+    }
+    this.addPlant(b.x + 0.55, b.z + 0.6);
   }
 
   /** A desk with its screen, keyboard and chair — what an office is judged by. */
@@ -2515,6 +2529,9 @@ export class OfficeEngine {
     group.position.set(item.x, 0, item.z);
     group.rotation.y = (item.rotation * Math.PI) / 180;
     group.userData.furnitureId = item.id;
+    if (SEAT_HEIGHT[item.catalogId]) {
+      group.userData.seatHeight = SEAT_HEIGHT[item.catalogId];
+    }
     return group;
   }
 
@@ -2840,6 +2857,125 @@ export class OfficeEngine {
           0,
           0.14,
           0.14
+        );
+        break;
+      }
+      case "armchair": {
+        const cushion = new THREE.MeshStandardMaterial({
+          color: tint.clone().offsetHSL(0, 0, 0.1),
+          roughness: 1,
+        });
+        add(new THREE.BoxGeometry(0.8, 0.3, 0.78), fabric, 0, 0.27, 0);
+        add(new THREE.BoxGeometry(0.62, 0.1, 0.6), cushion, 0, 0.46, 0.05);
+        add(new THREE.BoxGeometry(0.8, 0.62, 0.18), fabric, 0, 0.68, -0.3);
+        for (const x of [-0.34, 0.34]) {
+          add(new THREE.BoxGeometry(0.12, 0.26, 0.74), fabric, x, 0.55, 0);
+        }
+        break;
+      }
+      case "coffee_bar": {
+        add(
+          new THREE.BoxGeometry(1.7, 0.95, 0.62),
+          new THREE.MeshStandardMaterial({ color: tint, roughness: 0.8 }),
+          0,
+          0.475,
+          0
+        );
+        add(new THREE.BoxGeometry(1.8, 0.06, 0.7), white, 0, 0.98, 0);
+        add(new THREE.BoxGeometry(0.42, 0.48, 0.36), metal, -0.45, 1.25, -0.05);
+        add(
+          new THREE.BoxGeometry(0.3, 0.04, 0.04),
+          new THREE.MeshStandardMaterial({
+            color: PALETTE.screen,
+            emissive: PALETTE.screen,
+            emissiveIntensity: 0.8,
+          }),
+          -0.45,
+          1.38,
+          0.14
+        );
+        for (const [i, x] of [0.2, 0.4, 0.6].entries()) {
+          add(
+            new THREE.CylinderGeometry(0.05, 0.045, 0.11, 10),
+            new THREE.MeshStandardMaterial({
+              color: [PALETTE.wall, PALETTE.pot, PALETTE.glow][i],
+              roughness: 0.6,
+            }),
+            x,
+            1.07,
+            0.12
+          );
+        }
+        break;
+      }
+      case "cabinet": {
+        add(new THREE.BoxGeometry(0.6, 1.25, 0.6), wood, 0, 0.625, 0);
+        for (const y of [0.3, 0.7, 1.08]) {
+          add(
+            new THREE.BoxGeometry(0.54, 0.34, 0.02),
+            new THREE.MeshStandardMaterial({ color: dark, roughness: 0.6 }),
+            0,
+            y,
+            0.305
+          );
+          add(new THREE.BoxGeometry(0.2, 0.03, 0.04), white, 0, y + 0.09, 0.33);
+        }
+        break;
+      }
+      case "art_easel": {
+        const frame = new THREE.MeshStandardMaterial({
+          color: PALETTE.woodDark,
+          roughness: 0.6,
+        });
+        for (const x of [-0.3, 0.3]) {
+          add(new THREE.BoxGeometry(0.05, 1.5, 0.05), metal, x, 0.75, 0, -0.12);
+        }
+        add(
+          new THREE.BoxGeometry(0.05, 1.45, 0.05),
+          metal,
+          0,
+          0.72,
+          -0.32,
+          0.4
+        );
+        add(new THREE.BoxGeometry(0.8, 0.06, 0.12), metal, 0, 0.55, 0.06);
+        add(
+          new THREE.BoxGeometry(0.86, 0.66, 0.04),
+          frame,
+          0,
+          0.95,
+          0.03,
+          -0.12
+        );
+        add(
+          new THREE.BoxGeometry(0.74, 0.54, 0.02),
+          wood,
+          0,
+          0.95,
+          0.055,
+          -0.12
+        );
+        add(
+          new THREE.CircleGeometry(0.1, 20),
+          new THREE.MeshStandardMaterial({
+            color: PALETTE.pot,
+            roughness: 0.8,
+          }),
+          0.15,
+          1.03,
+          0.07,
+          -0.12
+        );
+        add(
+          new THREE.BoxGeometry(0.74, 0.14, 0.02),
+          new THREE.MeshStandardMaterial({
+            color: PALETTE.leaf,
+            roughness: 0.8,
+          }),
+          0,
+          0.75,
+          0.09,
+          -0.12
         );
         break;
       }
@@ -3569,6 +3705,7 @@ export class OfficeEngine {
     }
     group.position.set(x, 0, z);
     group.rotation.y = (rotation * Math.PI) / 180;
+    group.userData.seatHeight = 0.47;
     this.staticGroup.add(group);
   }
 
@@ -3600,6 +3737,7 @@ export class OfficeEngine {
     }
     group.position.set(x, 0, z);
     group.rotation.y = (rotation * Math.PI) / 180;
+    group.userData.seatHeight = 0.56;
     this.staticGroup.add(group);
     const rotated = rotation % 180 !== 0;
     const hw = rotated ? 0.6 : 1.15;
@@ -3634,12 +3772,19 @@ export class OfficeEngine {
     this.addCollider(x - 0.85, x + 0.85, z - 0.45, z + 0.45);
   }
 
-  private addRug(x: number, z: number, w: number, d: number, color: number) {
+  private addRug(
+    x: number,
+    z: number,
+    w: number,
+    d: number,
+    color: number,
+    lift = 0
+  ) {
     const rug = new THREE.Mesh(
       new THREE.BoxGeometry(w, 0.02, d),
       new THREE.MeshStandardMaterial({ color, roughness: 1 })
     );
-    rug.position.set(x, 0.03, z);
+    rug.position.set(x, 0.03 + lift, z);
     rug.receiveShadow = true;
     this.staticGroup.add(rug);
     const inner = new THREE.Mesh(
@@ -3649,7 +3794,7 @@ export class OfficeEngine {
         roughness: 1,
       })
     );
-    inner.position.set(x, 0.04, z);
+    inner.position.set(x, 0.04 + lift, z);
     this.staticGroup.add(inner);
   }
 
@@ -3691,13 +3836,14 @@ export class OfficeEngine {
   }
 
   private addBeanbag(x: number, z: number, color: number) {
+    const group = new THREE.Group();
     const bean = new THREE.Mesh(
       new THREE.SphereGeometry(0.42, 16, 12),
       new THREE.MeshStandardMaterial({ color, roughness: 1 })
     );
-    bean.position.set(x, 0.3, z);
+    bean.position.y = 0.3;
     bean.castShadow = true;
-    this.staticGroup.add(bean);
+    group.add(bean);
     const top = new THREE.Mesh(
       new THREE.SphereGeometry(0.28, 16, 12),
       new THREE.MeshStandardMaterial({
@@ -3705,40 +3851,70 @@ export class OfficeEngine {
         roughness: 1,
       })
     );
-    top.position.set(x, 0.14, z + 0.14);
-    this.staticGroup.add(top);
+    top.position.set(0, 0.14, 0.14);
+    group.add(top);
+    group.position.set(x, 0, z);
+    group.userData.seatHeight = SEAT_HEIGHT.beanbag;
+    this.staticGroup.add(group);
     this.addCollider(x - 0.4, x + 0.4, z - 0.4, z + 0.4);
   }
 
+  /** An open bookshelf: back, sides and four shelves of books facing +z. */
   private addShelf(x: number, z: number, rotation: number) {
     const group = new THREE.Group();
-    const frame = new THREE.Mesh(
-      new THREE.BoxGeometry(0.9, 1.8, 0.35),
-      new THREE.MeshStandardMaterial({ color: PALETTE.desk, roughness: 0.8 })
-    );
-    frame.position.y = 0.9;
-    frame.castShadow = true;
-    group.add(frame);
-    const colors = [0x7141f8, 0x22d3ee, 0xf472b6, 0xf59e0b, 0x34d399, 0xe5e7eb];
-    for (let i = 0; i < 10; i += 1) {
-      const book = new THREE.Mesh(
-        new THREE.BoxGeometry(0.08, 0.24, 0.2),
-        new THREE.MeshStandardMaterial({
-          color: colors[i % colors.length],
-          roughness: 0.9,
-        })
-      );
-      book.position.set(
-        -0.3 + (i % 4) * 0.16,
-        0.58 + Math.floor(i / 4) * 0.38,
-        0.03
-      );
-      group.add(book);
+    const wood = new THREE.MeshStandardMaterial({
+      color: PALETTE.desk,
+      roughness: 0.8,
+    });
+    const panel = (
+      w: number,
+      h: number,
+      d: number,
+      px: number,
+      py: number,
+      pz: number
+    ) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wood);
+      mesh.position.set(px, py, pz);
+      mesh.castShadow = true;
+      group.add(mesh);
+    };
+    panel(0.9, 1.8, 0.04, 0, 0.9, -0.155);
+    panel(0.05, 1.8, 0.35, -0.425, 0.9, 0);
+    panel(0.05, 1.8, 0.35, 0.425, 0.9, 0);
+    for (const y of [0.03, 0.47, 0.91, 1.35, 1.78])
+      panel(0.8, 0.04, 0.33, 0, y, 0);
+    const colors = [
+      PALETTE.accent,
+      PALETTE.screen,
+      PALETTE.pot,
+      PALETTE.glow,
+      PALETTE.sofa,
+      PALETTE.wallShade,
+    ];
+    for (let shelf = 0; shelf < 4; shelf += 1) {
+      for (let i = 0, bx = -0.36; bx < 0.3; i += 1) {
+        const w = 0.06 + ((shelf * 3 + i) % 3) * 0.02;
+        const h = 0.26 + ((shelf + i) % 3) * 0.04;
+        const book = new THREE.Mesh(
+          new THREE.BoxGeometry(w, h, 0.22),
+          new THREE.MeshStandardMaterial({
+            color: colors[(shelf * 2 + i) % colors.length],
+            roughness: 0.9,
+          })
+        );
+        book.position.set(bx + w / 2, 0.05 + shelf * 0.44 + h / 2, 0.02);
+        group.add(book);
+        bx += w + 0.015;
+      }
     }
     group.position.set(x, 0, z);
     group.rotation.y = (rotation * Math.PI) / 180;
     this.staticGroup.add(group);
-    this.addCollider(x - 0.3, x + 0.3, z - 0.5, z + 0.5);
+    const across = rotation % 180 === 0;
+    const hw = across ? 0.5 : 0.3;
+    const hd = across ? 0.3 : 0.5;
+    this.addCollider(x - hw, x + hw, z - hd, z + hd);
   }
 
   private addCabinet(x: number, z: number, rotation: number) {
@@ -3891,6 +4067,100 @@ export class OfficeEngine {
 
   // --------------------------------------------------------------- input
 
+  // ------------------------------------------------------------------ seats
+
+  /** The chair, sofa, armchair or bean bag under the pointer, if any. */
+  private seatUnderPointer(): THREE.Object3D | null {
+    const hits = this.raycaster.intersectObjects(
+      [this.buildingGroup, this.staticGroup, this.furnitureGroup],
+      true
+    );
+    for (const hit of hits.slice(0, 1)) {
+      let node: THREE.Object3D | null = hit.object;
+      while (node && node.userData.seatHeight === undefined) {
+        node = node.parent;
+      }
+      if (node) return node;
+    }
+    return null;
+  }
+
+  /**
+   * Walks to a free spot beside the seat; the player sits once they arrive.
+   * The front is tried first, then the sides, so a chair tucked under a desk
+   * is still reachable.
+   */
+  private walkToSeat(seat: THREE.Object3D): boolean {
+    const fx = Math.sin(seat.rotation.y);
+    const fz = Math.cos(seat.rotation.y);
+    const sides = [
+      [fx, fz],
+      [fz, -fx],
+      [-fz, fx],
+      [-fx, -fz],
+    ];
+    const spots = [0.85, 1.1, 1.35].flatMap((reach) =>
+      sides.map(([dx, dz]) => ({
+        x: seat.position.x + dx * reach,
+        z: seat.position.z + dz * reach,
+      }))
+    );
+    for (const { x, z } of spots) {
+      if (this.isBlocked(x, z)) continue;
+      const here = Math.hypot(
+        x - this.playerPosition.x,
+        z - this.playerPosition.z
+      );
+      const path =
+        here < 0.3
+          ? []
+          : this.findPath(this.playerPosition.x, this.playerPosition.z, x, z);
+      if (here >= 0.3 && !path.length) continue;
+      this.path = path;
+      this.pathIndex = 0;
+      this.pendingSeat = seat;
+      this.showMarker(x, z);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Placed furniture is rebuilt whenever a layout changes; keep sitting on the
+   * new copy of the same chair. False when the seat is gone.
+   */
+  private followSeat(): boolean {
+    const seat = this.seated;
+    if (!seat) return false;
+    if (seat.parent) return true;
+    const id = seat.userData.furnitureId as string | undefined;
+    const rebuilt = id ? this.furnitureMeshes.get(id) : undefined;
+    if (!rebuilt?.parent || rebuilt.userData.seatHeight === undefined) {
+      return false;
+    }
+    this.seated = rebuilt;
+    return true;
+  }
+
+  private poseSeated(rig: AvatarRig, seat: THREE.Object3D, elapsed: number) {
+    const height = seat.userData.seatHeight as number;
+    const back = 0.06;
+    rig.group.position.set(
+      seat.position.x - Math.sin(seat.rotation.y) * back,
+      height - 0.74,
+      seat.position.z - Math.cos(seat.rotation.y) * back
+    );
+    rig.group.rotation.y = seat.rotation.y;
+    this.playerYaw = seat.rotation.y;
+    this.playerSpeed = 0;
+    rig.leftLeg.rotation.x = -1.2;
+    rig.rightLeg.rotation.x = -1.2;
+    const breath = Math.sin(elapsed * 1.2 + rig.phase) * 0.03;
+    rig.leftArm.rotation.x = -0.45 + breath;
+    rig.rightArm.rotation.x = -0.45 - breath;
+    rig.ring.visible = false;
+  }
+
   private onKeyDown(event: KeyboardEvent) {
     const target = event.target as HTMLElement | null;
     if (
@@ -4014,6 +4284,11 @@ export class OfficeEngine {
     if (this.cinematic) return;
 
     this.raycaster.setFromCamera(this.pointerNdc, this.camera);
+    const seat = this.seatUnderPointer();
+    if (seat) {
+      if (!this.walkToSeat(seat)) this.callbacks.onInvalidTarget();
+      return;
+    }
     const intersections = this.raycaster.intersectObject(
       this.floorPlane,
       false
@@ -4037,6 +4312,7 @@ export class OfficeEngine {
     }
     this.path = path;
     this.pathIndex = 0;
+    this.pendingSeat = null;
     this.showMarker(point.x, point.z);
   }
 
@@ -4388,7 +4664,23 @@ export class OfficeEngine {
     inputZ += this.joystick.y;
 
     const hasInput = Math.abs(inputX) + Math.abs(inputZ) > 0.05;
+    if (
+      this.seated &&
+      (hasInput ||
+        this.path.length ||
+        this.pendingSeat ||
+        this.editState.active ||
+        !this.followSeat())
+    ) {
+      this.seated = null;
+    }
+    if (this.seated) {
+      this.poseSeated(this.playerRig, this.seated, elapsed);
+      this.pushPosition();
+      return;
+    }
     if (hasInput) {
+      this.pendingSeat = null;
       this.path = [];
       const length = Math.hypot(inputX, inputZ) || 1;
       inputX /= length;
@@ -4438,6 +4730,20 @@ export class OfficeEngine {
       this.playerYaw = Math.atan2(this.playerVelocity.x, this.playerVelocity.y);
     }
     this.playerSpeed = speed;
+
+    if (this.pendingSeat && !this.path.length) {
+      const seat = this.pendingSeat;
+      this.pendingSeat = null;
+      const near =
+        Math.hypot(
+          seat.position.x - this.playerPosition.x,
+          seat.position.z - this.playerPosition.z
+        ) < 1.8;
+      if (seat.parent && near) {
+        this.seated = seat;
+        this.playerVelocity.set(0, 0);
+      }
+    }
 
     this.playerRig.group.position.set(
       this.playerPosition.x,
