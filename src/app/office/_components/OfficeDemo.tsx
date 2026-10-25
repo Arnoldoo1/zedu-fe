@@ -1130,7 +1130,6 @@ export default function OfficeDemo({
     if (target?.locked) {
       engine.pulseOffice(office.roomId, office.floorIndex);
       engine.focusTowerRoom(office.roomId);
-      setTowerHover(office);
       setTowerFocus(office.floorIndex);
       setTowerPreview(null);
       setChatOpen(false);
@@ -1149,7 +1148,6 @@ export default function OfficeDemo({
     // where they are and no room is joined.
     engine.pulseOffice(office.roomId, office.floorIndex);
     engine.focusTowerRoom(office.roomId);
-    setTowerHover(office);
     setTowerFocus(office.floorIndex);
     setLiftTarget(office.floorIndex);
     schedule(() => setLiftTarget(null), 850);
