@@ -30,6 +30,9 @@ import {
   withPersonalOfficeDefaults,
 } from "~/app/office/_components/office-layout";
 
+/** The REST prefix every office request is built on. */
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL;
+
 /** The API speaks two dimensions, the scene works in three. */
 function toSceneItem(item: OfficeApiItem): OfficeFurnitureItem {
   return {
@@ -83,6 +86,18 @@ function unwrap<T>(response: any, fallback: string): T {
     throw new Error(response?.data?.message ?? fallback);
   }
   return response?.data?.data as T;
+}
+
+/**
+ * Whether the incoming record is older than the one already held. A record
+ * whose timestamp cannot be read is never considered older, so a snapshot can
+ * only erase live publication state when it can prove it predates it.
+ */
+function isOlderOccupant(incoming: OfficeOccupant, held: OfficeOccupant) {
+  const at = Date.parse(incoming.updatedAt ?? "");
+  const heldAt = Date.parse(held.updatedAt ?? "");
+  if (Number.isNaN(at) || Number.isNaN(heldAt)) return false;
+  return at < heldAt;
 }
 
 /** A row as the 2D chat's thread endpoints return it; the office reads a few fields. */
@@ -573,6 +588,38 @@ export class LiveOfficeSource implements OfficeSource {
     );
   }
 
+  async sendPosition(
+    roomId: string,
+    x: number,
+    z: number,
+    yaw: number
+  ): Promise<number> {
+    // Movement is published several times a second, so it goes out through a
+    // plain fetch instead of the toast helpers: a rejected attempt (409, 429
+    // or a network blip) must stay silent and hand the status back, the way
+    // the office already asks Zoe without an interceptor in between.
+    const token = localStorage.getItem("token") ?? "";
+    const url = `${BASE_URL}/office/rooms/${encodeRoomId(roomId)}/presence`;
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          position: { x, y: 0, z },
+          rotation: yaw,
+        }),
+      });
+      return response.status;
+    } catch {
+      // No answer at all: 0 tells the caller to back off and try again later.
+      return 0;
+    }
+  }
+
   async fetchOccupants(roomId: string): Promise<OfficeOccupant[]> {
     // Centrifugo only carries what happens after a subscription, so the room
     // is read once to fill in the people who were already standing there.
@@ -589,6 +636,12 @@ export class LiveOfficeSource implements OfficeSource {
   }
 
   private roster = new Map<string, OfficeOccupant>();
+  /**
+   * Raised on every subscribe cycle, so a snapshot requested by an older
+   * cycle that lands late is dropped instead of overwriting a roster that
+   * has already been resynchronized.
+   */
+  private rosterGeneration = 0;
 
   subscribePresence(
     roomId: string,
@@ -608,22 +661,46 @@ export class LiveOfficeSource implements OfficeSource {
       getToken: () => getSubscriptionToken(channel),
     });
 
-    // Seed the roster once from the REST snapshot, so people who were already
-    // in the room survive the first realtime event.
-    this.roster.clear();
-    onState?.("connecting");
     let cancelled = false;
-    void this.fetchOccupants(roomId)
-      .then((occupants) => {
-        if (cancelled) return;
-        for (const occupant of occupants) {
-          this.roster.set(occupant.userId, occupant);
-        }
-        onPresence([...this.roster.values()]);
-      })
-      .catch(() => {
-        // The subscription still delivers everyone who arrives later.
-      });
+    /** People the stream reported as gone while the snapshot is in flight. */
+    let leftDuringSync: Set<string> | null = null;
+    const emit = () => onPresence([...this.roster.values()]);
+
+    /** A record only overwrites the one held when it is not provably older. */
+    const merge = (occupant: OfficeOccupant) => {
+      const held = this.roster.get(occupant.userId);
+      if (held && isOlderOccupant(occupant, held)) return;
+      this.roster.set(occupant.userId, occupant);
+    };
+
+    // The stream only carries what happens from the subscription onwards, so
+    // the room is read each time the subscription goes live: on the first
+    // join and after every reconnect alike, because publications missed while
+    // the connection was down cannot be recovered any other way.
+    const resync = () => {
+      const generation = ++this.rosterGeneration;
+      const left = new Set<string>();
+      leftDuringSync = left;
+      this.roster.clear();
+
+      void this.fetchOccupants(roomId)
+        .then((occupants) => {
+          // A newer resync or a teardown owns the roster now.
+          if (cancelled || generation !== this.rosterGeneration) return;
+          for (const occupant of occupants) {
+            // A departure the stream already carried is newer than this
+            // snapshot, so that person is not brought back from it.
+            if (left.has(occupant.userId)) continue;
+            merge(occupant);
+          }
+          if (leftDuringSync === left) leftDuringSync = null;
+          emit();
+        })
+        .catch(() => {
+          // The subscription still delivers everyone who arrives later.
+          if (leftDuringSync === left) leftDuringSync = null;
+        });
+    };
 
     const onPublication = (ctx: any) => {
       const presence = ctx?.data?.presence as OfficeOccupant | undefined;
@@ -632,26 +709,35 @@ export class LiveOfficeSource implements OfficeSource {
 
       if (eventType === "leave") {
         this.roster.delete(presence.userId);
+        leftDuringSync?.add(presence.userId);
       } else {
-        this.roster.set(presence.userId, presence);
+        leftDuringSync?.delete(presence.userId);
+        merge(presence);
       }
 
       // Emit the complete roster so the UI never has stale entries.
-      onPresence([...this.roster.values()]);
+      emit();
     };
 
-    const onSubscribed = () => onState?.("live");
+    const onSubscribed = () => {
+      // Going live (the first time or after a reconnect) is the moment to
+      // read the room again: it holds everyone the stream did not carry.
+      onState?.("live");
+      resync();
+    };
     const onUnsubscribed = () => onState?.("connecting");
 
     subscription.on("publication", onPublication);
     subscription.on("subscribed", onSubscribed);
     subscription.on("unsubscribed", onUnsubscribed);
+    onState?.("connecting");
     // A shared subscription may already be live from another room.
-    if (subscription.state === "subscribed") onState?.("live");
+    if (subscription.state === "subscribed") onSubscribed();
     subscription.subscribe();
 
     return () => {
       cancelled = true;
+      this.rosterGeneration++;
       subscription.off("publication", onPublication);
       subscription.off("subscribed", onSubscribed);
       subscription.off("unsubscribed", onUnsubscribed);
