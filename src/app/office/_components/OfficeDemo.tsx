@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, MonitorX, RefreshCw } from "lucide-react";
 import { cn } from "~/lib/utils";
+import { useRBAC } from "~/hooks/useRBAC";
 import { showError, showInfo, showSuccess } from "~/components/toast/sonner";
 import EntryScreen from "./EntryScreen";
 import Hud, { type PresencePoint } from "./Hud";
@@ -320,6 +321,9 @@ export default function OfficeDemo({
   // Rooms whose real conversation has already been read, so re-entering a room
   // does not refetch what is already on screen.
   const historyRef = useRef(new Set<string>());
+  const dirtyLayoutsRef = useRef(new Map<string, FurnitureItem[]>());
+  const queuedLayoutsRef = useRef(new Map<string, FurnitureItem[]>());
+  const saveQueueRef = useRef(Promise.resolve());
 
   const currentRoom = roomId ? (roomById[roomId] ?? null) : null;
   const currentItems = currentRoom ? (layouts[currentRoom.id] ?? []) : [];
@@ -387,11 +391,21 @@ export default function OfficeDemo({
     return [...shared, ...people];
   }, [source.mode, source.members, rooms, presence, selfId]);
   const isShared = Boolean(currentRoom && currentRoom.kind !== "personal");
-  const canEdit = Boolean(
-    currentRoom &&
-    !currentRoom.locked &&
-    (currentRoom.kind !== "personal" || currentRoom.ownerId === selfId)
+  const { hasPermission } = useRBAC();
+  const canEditShared =
+    source.mode === "demo" || hasPermission("manage:organization");
+  const canEditRoom = useCallback(
+    (room: (typeof rooms)[number] | null | undefined) =>
+      Boolean(
+        room &&
+        !room.locked &&
+        (room.kind === "personal" ? room.ownerId === selfId : canEditShared)
+      ),
+    [selfId, canEditShared]
   );
+  const canEditRoomRef = useRef(canEditRoom);
+  canEditRoomRef.current = canEditRoom;
+  const canEdit = canEditRoom(currentRoom);
   const currentMessages = currentRoom
     ? (messagesByRoom[currentRoom.id] ?? [])
     : [];
@@ -723,33 +737,52 @@ export default function OfficeDemo({
   }, [phase, onboardingKey]);
 
   useEffect(() => {
-    if (!hydrated) return;
-    setSaveState("saving");
+    if (!hydrated || dirtyLayoutsRef.current.size === 0) return;
     const timer = window.setTimeout(() => {
-      const state = stateRef.current;
-      const room = state.roomId ? roomById[state.roomId] : null;
-      const roomKey = state.roomId;
-      const items = roomKey ? (state.layouts[roomKey] ?? []) : [];
-
-      void source
-        .saveLayout(roomKey ?? "", items)
-        .catch(() => {
-          // The scene keeps the local state; the next save retries.
-        })
-        .finally(() => {
-          setSaveState(
-            state.editorActive && room && room.kind !== "personal"
-              ? "draft"
-              : "saved"
-          );
+      for (const [roomKey, items] of dirtyLayoutsRef.current) {
+        const room = roomById[roomKey];
+        if (
+          !canEditRoomRef.current(room) ||
+          queuedLayoutsRef.current.get(roomKey) === items
+        ) {
+          continue;
+        }
+        queuedLayoutsRef.current.set(roomKey, items);
+        // Keep each edited room's snapshot, even if the player moves away.
+        // Serial writes prevent an older save overwriting a newer edit.
+        saveQueueRef.current = saveQueueRef.current.then(async () => {
+          try {
+            if (
+              !canEditRoomRef.current(room) ||
+              dirtyLayoutsRef.current.get(roomKey) !== items
+            ) {
+              return;
+            }
+            await source.saveLayout(roomKey, items);
+            if (dirtyLayoutsRef.current.get(roomKey) === items) {
+              dirtyLayoutsRef.current.delete(roomKey);
+            }
+            setSaveState(
+              dirtyLayoutsRef.current.size > 0 || room.kind !== "personal"
+                ? "draft"
+                : "saved"
+            );
+          } catch {
+            setSaveState("draft");
+            showError(
+              "Could not save furniture",
+              "Your changes are not saved. Edit again to retry."
+            );
+          } finally {
+            if (queuedLayoutsRef.current.get(roomKey) === items) {
+              queuedLayoutsRef.current.delete(roomKey);
+            }
+          }
         });
+      }
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [layouts, hydrated, source, roomById]);
-
-  useEffect(() => {
-    if (!editorActive) setSaveState("saved");
-  }, [editorActive]);
+  }, [layouts, hydrated, source, roomById, canEditRoom]);
 
   useEffect(() => {
     if (phase !== "office" || !roomId) return;
@@ -1196,7 +1229,15 @@ export default function OfficeDemo({
   }
 
   function commitRoom(roomKey: string, nextItems: FurnitureItem[]) {
+    if (!canEditRoom(roomById[roomKey])) return;
+    if (
+      JSON.stringify(stateRef.current.layouts[roomKey] ?? []) ===
+      JSON.stringify(nextItems)
+    ) {
+      return;
+    }
     recordHistory(roomKey);
+    dirtyLayoutsRef.current.set(roomKey, nextItems);
     setLayouts((previous) => ({ ...previous, [roomKey]: nextItems }));
     setSaveState("saving");
   }
@@ -1367,8 +1408,11 @@ export default function OfficeDemo({
   function undo() {
     const state = stateRef.current;
     const roomKey = state.roomId;
-    if (!roomKey || undoStack.length === 0) return;
+    if (!roomKey || !canEditRoom(roomById[roomKey]) || undoStack.length === 0) {
+      return;
+    }
     const previous = undoStack[undoStack.length - 1];
+    dirtyLayoutsRef.current.set(roomKey, previous);
     const current = state.layouts[roomKey] ?? [];
     setUndoStack((stack) => stack.slice(0, -1));
     setRedoStack((stack) => [...stack, current]);
@@ -1379,15 +1423,18 @@ export default function OfficeDemo({
     setSelectedFurnitureId(null);
     setEditorCatalogId(null);
     setEditorMovingId(null);
-    setSaveState("saved");
+    setSaveState("saving");
     showInfo("Undone");
   }
 
   function redo() {
     const state = stateRef.current;
     const roomKey = state.roomId;
-    if (!roomKey || redoStack.length === 0) return;
+    if (!roomKey || !canEditRoom(roomById[roomKey]) || redoStack.length === 0) {
+      return;
+    }
     const next = redoStack[redoStack.length - 1];
+    dirtyLayoutsRef.current.set(roomKey, next);
     const current = state.layouts[roomKey] ?? [];
     setRedoStack((stack) => stack.slice(0, -1));
     setUndoStack((stack) => [...stack, current]);
@@ -1398,7 +1445,7 @@ export default function OfficeDemo({
     setSelectedFurnitureId(null);
     setEditorCatalogId(null);
     setEditorMovingId(null);
-    setSaveState("saved");
+    setSaveState("saving");
     showInfo("Redone");
   }
 
@@ -1420,14 +1467,18 @@ export default function OfficeDemo({
   }
 
   function publishLayout() {
-    if (!currentRoom) return;
+    if (!currentRoom || !canEditRoom(currentRoom)) return;
     const room = currentRoom;
     const items = layouts[room.id] ?? [];
     setSaveState("saving");
-    void source
-      .publishLayout(room.id, items)
+    dirtyLayoutsRef.current.delete(room.id);
+    const publish = saveQueueRef.current.then(() =>
+      source.publishLayout(room.id, items)
+    );
+    saveQueueRef.current = publish.catch(() => {});
+    void publish
       .then(() => {
-        setSaveState("saved");
+        setSaveState(dirtyLayoutsRef.current.size > 0 ? "draft" : "saved");
         showSuccess(
           "Layout published",
           `Everyone in ${room.name} can see the new arrangement.`
@@ -1435,6 +1486,9 @@ export default function OfficeDemo({
       })
       .catch(() => {
         setSaveState("draft");
+        if (!dirtyLayoutsRef.current.has(room.id)) {
+          dirtyLayoutsRef.current.set(room.id, items);
+        }
         showError("Could not publish", "Your draft is still saved locally.");
       });
   }
@@ -1453,7 +1507,6 @@ export default function OfficeDemo({
     setEditorRotation(0);
     setSelectedFurnitureId(null);
     setGhostReason(null);
-    setSaveState("saved");
   }
 
   function toggleEditor() {
@@ -1475,6 +1528,13 @@ export default function OfficeDemo({
       showError("Read-only office", "Only the owner can furnish this office.");
       return;
     }
+    if (!canEditRoom(room)) {
+      showError(
+        "Read-only room",
+        "Only administrators can furnish shared rooms."
+      );
+      return;
+    }
     setEditorActive(true);
     setEditorCatalogId(null);
     setEditorMovingId(null);
@@ -1485,7 +1545,11 @@ export default function OfficeDemo({
     setZoeOpen(false);
     setDirectoryOpen(false);
     setOnboardingOpen(false);
-    setSaveState(room.kind === "personal" ? "saved" : "draft");
+    setSaveState(
+      dirtyLayoutsRef.current.has(room.id) || room.kind !== "personal"
+        ? "draft"
+        : "saved"
+    );
   }
 
   function openZoe() {
