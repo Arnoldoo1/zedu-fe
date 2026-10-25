@@ -22,9 +22,8 @@ import type {
 } from "~/types/office";
 import type { TowerOffice } from "./engine/tower-scene";
 
-// Public localStorage identifiers, not credentials.
-const KEY_LAYOUTS = "office-demo-layouts-v1"; // gitleaks:allow
-const KEY_AVATAR = "office-demo-avatar-v1"; // gitleaks:allow
+const KEY_LAYOUTS = "office-demo-layouts-v1";
+const KEY_AVATAR = "office-demo-avatar-v1";
 
 /**
  * The demo is the full building, not a sample of it: ten storeys, and every
