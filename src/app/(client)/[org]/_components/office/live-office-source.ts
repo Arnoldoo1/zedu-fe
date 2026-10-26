@@ -1,6 +1,11 @@
 "use client";
 
-import { GetRequest, PostRequest, PutRequest } from "~/utils/new-request";
+import {
+  BuzzRequest,
+  GetRequest,
+  PostRequest,
+  PutRequest,
+} from "~/utils/new-request";
 import {
   getSharedCentrifuge,
   getSubscriptionToken,
@@ -83,6 +88,18 @@ function unwrap<T>(response: any, fallback: string): T {
     throw new Error(response?.data?.message ?? fallback);
   }
   return response?.data?.data as T;
+}
+
+/**
+ * Whether the incoming record is older than the one already held. A record
+ * whose timestamp cannot be read is never considered older, so a snapshot can
+ * only erase live publication state when it can prove it predates it.
+ */
+function isOlderOccupant(incoming: OfficeOccupant, held: OfficeOccupant) {
+  const at = Date.parse(incoming.updatedAt ?? "");
+  const heldAt = Date.parse(held.updatedAt ?? "");
+  if (Number.isNaN(at) || Number.isNaN(heldAt)) return false;
+  return at < heldAt;
 }
 
 /** A row as the 2D chat's thread endpoints return it; the office reads a few fields. */
@@ -573,6 +590,24 @@ export class LiveOfficeSource implements OfficeSource {
     );
   }
 
+  async sendPosition(
+    roomId: string,
+    x: number,
+    z: number,
+    yaw: number
+  ): Promise<number> {
+    // Movement goes out several times a second, so it uses the silent request
+    // helper: a refused attempt (409, 429 or a network blip) must not raise a
+    // toast, it only hands its status back to the caller to back off with.
+    const response = await BuzzRequest(
+      `/office/rooms/${encodeRoomId(roomId)}/presence`,
+      { position: { x, y: 0, z }, rotation: yaw }
+    );
+    const status = response?.status ?? response?.response?.status;
+    // No answer at all: 0 tells the caller to back off and try again later.
+    return typeof status === "number" ? status : 0;
+  }
+
   async fetchOccupants(roomId: string): Promise<OfficeOccupant[]> {
     // Centrifugo only carries what happens after a subscription, so the room
     // is read once to fill in the people who were already standing there.
@@ -587,8 +622,6 @@ export class LiveOfficeSource implements OfficeSource {
       ) ?? []
     );
   }
-
-  private roster = new Map<string, OfficeOccupant>();
 
   subscribePresence(
     roomId: string,
@@ -608,22 +641,78 @@ export class LiveOfficeSource implements OfficeSource {
       getToken: () => getSubscriptionToken(channel),
     });
 
-    // Seed the roster once from the REST snapshot, so people who were already
-    // in the room survive the first realtime event.
-    this.roster.clear();
-    onState?.("connecting");
     let cancelled = false;
-    void this.fetchOccupants(roomId)
-      .then((occupants) => {
-        if (cancelled) return;
-        for (const occupant of occupants) {
-          this.roster.set(occupant.userId, occupant);
-        }
-        onPresence([...this.roster.values()]);
-      })
-      .catch(() => {
-        // The subscription still delivers everyone who arrives later.
-      });
+    /**
+     * The roster belongs to this subscription and to no other: two rooms can
+     * never mix their people, and closing one room cannot empty another. It is
+     * only ever replaced whole, never cleared first, so a snapshot landing
+     * late cannot make the avatars disappear in between.
+     */
+    let roster = new Map<string, OfficeOccupant>();
+    /** Raised on every resync, so a snapshot an older one requested is dropped. */
+    let syncGeneration = 0;
+    /**
+     * What the stream carried while a snapshot was being read: a join or a
+     * departure that happened after the snapshot was taken.
+     */
+    let inFlight: {
+      left: Set<string>;
+      upserts: Map<string, OfficeOccupant>;
+    } | null = null;
+
+    const emit = () => onPresence([...roster.values()]);
+
+    /** A record only overwrites the one held when it is not provably older. */
+    const apply = (
+      target: Map<string, OfficeOccupant>,
+      occupant: OfficeOccupant
+    ) => {
+      const held = target.get(occupant.userId);
+      if (held && isOlderOccupant(occupant, held)) return false;
+      target.set(occupant.userId, occupant);
+      return true;
+    };
+
+    // The stream only carries what happens from the subscription onwards, so
+    // the room is read each time the subscription goes live: on the first
+    // join and after every reconnect alike, because publications missed while
+    // the connection was down cannot be recovered any other way.
+    const resync = () => {
+      const generation = ++syncGeneration;
+      const ticket = {
+        left: new Set<string>(),
+        upserts: new Map<string, OfficeOccupant>(),
+      };
+      inFlight = ticket;
+
+      void this.fetchOccupants(roomId)
+        .then((occupants) => {
+          // A newer resync or a teardown owns the roster now.
+          if (cancelled || generation !== syncGeneration) return;
+          if (inFlight === ticket) inFlight = null;
+
+          // The snapshot and the stream are folded into a new map that is
+          // swapped in one step, so nobody is missing while it is rebuilt.
+          const next = new Map<string, OfficeOccupant>();
+          for (const occupant of occupants) {
+            // A departure the stream already carried is newer than this
+            // snapshot, so that person is not brought back from it.
+            if (ticket.left.has(occupant.userId)) continue;
+            next.set(occupant.userId, occupant);
+          }
+          for (const [userId, occupant] of ticket.upserts) {
+            const held = next.get(userId);
+            if (held && isOlderOccupant(occupant, held)) continue;
+            next.set(userId, occupant);
+          }
+          roster = next;
+          emit();
+        })
+        .catch(() => {
+          // The subscription still delivers everyone who arrives later.
+          if (inFlight === ticket) inFlight = null;
+        });
+    };
 
     const onPublication = (ctx: any) => {
       const presence = ctx?.data?.presence as OfficeOccupant | undefined;
@@ -631,33 +720,45 @@ export class LiveOfficeSource implements OfficeSource {
       if (!presence) return;
 
       if (eventType === "leave") {
-        this.roster.delete(presence.userId);
+        roster.delete(presence.userId);
+        inFlight?.upserts.delete(presence.userId);
+        inFlight?.left.add(presence.userId);
       } else {
-        this.roster.set(presence.userId, presence);
+        inFlight?.left.delete(presence.userId);
+        // Only a record that actually took hold has to survive the snapshot.
+        if (apply(roster, presence))
+          inFlight?.upserts.set(presence.userId, presence);
       }
 
       // Emit the complete roster so the UI never has stale entries.
-      onPresence([...this.roster.values()]);
+      emit();
     };
 
-    const onSubscribed = () => onState?.("live");
+    const onSubscribed = () => {
+      // Going live (the first time or after a reconnect) is the moment to
+      // read the room again: it holds everyone the stream did not carry.
+      onState?.("live");
+      resync();
+    };
     const onUnsubscribed = () => onState?.("connecting");
 
     subscription.on("publication", onPublication);
     subscription.on("subscribed", onSubscribed);
     subscription.on("unsubscribed", onUnsubscribed);
+    onState?.("connecting");
     // A shared subscription may already be live from another room.
-    if (subscription.state === "subscribed") onState?.("live");
+    if (subscription.state === "subscribed") onSubscribed();
     subscription.subscribe();
 
     return () => {
       cancelled = true;
+      syncGeneration++;
       subscription.off("publication", onPublication);
       subscription.off("subscribed", onSubscribed);
       subscription.off("unsubscribed", onUnsubscribed);
       releaseChannelSubscription(client, channel, subscription);
-      // Clear the roster for this room so a subsequent subscription starts clean.
-      this.roster.clear();
+      // The roster dies with the subscription it belongs to, so the next room
+      // starts from its own snapshot instead of inheriting this one.
     };
   }
 

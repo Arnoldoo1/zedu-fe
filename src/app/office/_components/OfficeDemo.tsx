@@ -31,6 +31,7 @@ import {
   validatePlacement,
 } from "./office-data";
 import { demoSource, demoTowerOffices } from "./demo-office-source";
+import { useOfficePresence } from "./use-office-presence";
 import type {
   OfficeOccupant,
   OfficeSource,
@@ -874,48 +875,16 @@ export default function OfficeDemo({
     engineRef.current?.setOccupants(occupants);
   }, []);
 
-  // The live office listens for real presence over Centrifugo. Presence is
-  // published per room, so the subscription follows the room the user is in.
-  useEffect(() => {
-    if (source.mode !== "live" || phase !== "office") return;
-
-    return source.subscribePresence(
-      roomId ?? "lobby",
-      mergePresence,
-      setPresenceState
-    );
-  }, [source, phase, roomId, mergePresence]);
-
-  // The stream only carries what happens after the subscription, so the room
-  // is read once when the user arrives to find who is already standing there.
-  useEffect(() => {
-    if (source.mode !== "live" || phase !== "office" || !roomId) return;
-
-    let cancelled = false;
-
-    source
-      .fetchOccupants(roomId)
-      .then((occupants) => {
-        if (!cancelled) mergePresence(occupants);
-      })
-      .catch(() => {
-        // A room that cannot be read is not a reason to break the office.
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [source, phase, roomId, mergePresence]);
-
-  // Live presence follows the room the player is in.
-  useEffect(() => {
-    if (source.mode !== "live" || phase !== "office" || !roomId) return;
-
-    source.enterRoom(roomId);
-    return () => {
-      source.leaveRoom(roomId);
-    };
-  }, [source, phase, roomId]);
+  // Presence, room entry and movement publishing all follow the room the user
+  // is in, and all of them are sequenced in one place.
+  useOfficePresence({
+    source,
+    active: source.mode === "live" && phase === "office",
+    roomId,
+    pose: player,
+    onOccupants: mergePresence,
+    onState: setPresenceState,
+  });
 
   // A room being read is a room whose conversation matters: the one you are
   // standing in, or the one held in frame from the street.

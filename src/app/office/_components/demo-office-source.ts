@@ -331,6 +331,11 @@ export const demoSource: OfficeSource = {
     // The demo has no server to tell.
   },
 
+  async sendPosition() {
+    // The demo has no server to tell, so the pose stays local.
+    return 200;
+  },
+
   async fetchOccupants(_roomId: string): Promise<OfficeOccupant[]> {
     return [];
   },
