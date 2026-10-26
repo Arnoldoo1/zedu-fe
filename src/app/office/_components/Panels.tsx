@@ -189,7 +189,12 @@ export function RoomDirectory({
                   <span className="h-px flex-1 bg-white/6" />
                 </div>
                 <div className="space-y-1">
-                  {group.ids.map((id) => {
+                  {(group.kind
+                    ? rooms
+                        .filter((room) => room.kind === group.kind)
+                        .map((room) => room.id)
+                    : group.ids
+                  ).map((id) => {
                     const room = rooms.find((entry) => entry.id === id);
                     if (!room) return null;
                     return (

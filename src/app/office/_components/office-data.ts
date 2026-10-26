@@ -385,19 +385,19 @@ export const ROOM_BY_ID: Record<string, OfficeRoom> = Object.fromEntries(
 
 export const DEFAULT_ROOM = ROOM_BY_ID.reception;
 
-export const ROOM_GROUPS: Array<{ label: string; ids: string[] }> = [
+export const ROOM_GROUPS: Array<{
+  label: string;
+  ids: string[];
+  kind?: RoomKind;
+}> = [
   {
     label: "Shared spaces",
     ids: ["reception", "lounge", "meeting:1", "meeting:2"],
   },
   {
     label: "Channels",
-    ids: [
-      "channel:general",
-      "channel:design",
-      "channel:dev",
-      "channel:marketing",
-    ],
+    kind: "channel",
+    ids: [],
   },
   { label: "Focus pods", ids: ["focus:1", "focus:2", "focus:3", "focus:4"] },
   {
