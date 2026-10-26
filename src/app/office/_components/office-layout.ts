@@ -40,31 +40,27 @@ export function ownsPersonalOffice(room: OfficeRoom, userId: string): boolean {
 /**
  * The furniture a personal office starts with.
  *
- * It answers the same question the old built-in kit answered — a desk against
- * the wall you come in through, an ergonomic chair, a plant in the corner,
- * storage on the wall and an area rug — but as ordinary layout items, so the
- * owner can select, move, rotate, delete and keep every piece. It is sized
- * from the room, so both the 5 by 5.4 member office and the demo's wider
- * offices work: a piece that would cross a wall, block the doorway or overlap
- * something already in the room is left out rather than forced in.
- *
- * The rug is placed under the workstation and chair, leaving the doorway clear.
+ * The desk stands out in the room on its own rug with the chair behind it,
+ * facing the back wall, and the back wall holds a plant, an open bookshelf and
+ * a reading lamp; the framed print hangs between them. Every piece is an
+ * ordinary layout item, so the owner can select, move, rotate, delete and keep
+ * it. It is sized from the room, so both the 5 by 5.4 member office and the
+ * demo's wider offices work: a piece that would cross a wall, block the
+ * doorway or overlap something already in the room is left out rather than
+ * forced in.
  */
 export function personalOfficeTemplate(room: OfficeRoom): FurnitureItem[] {
   const b = room.bounds;
   const cx = b.x + b.w / 2;
-  const deskZ = b.z + Math.min(1.3, b.d * 0.26);
-  const rugZ = deskZ + 0.6;
-
-  // If the door is on the south wall (typical member office), place shelf away from the south wall.
-  // If the door is on the west wall (e.g. demo rooms), place shelf toward the south corner.
-  const isSouthDoor = room.door && Math.abs(room.door.z - (b.z + b.d)) < 0.5;
-  const shelfZ = isSouthDoor
-    ? Math.min(deskZ + 1.2, b.z + b.d - 2.0)
-    : b.z + b.d - 1.3;
+  const roomy = b.w >= 4.2 && b.d >= 4.2;
+  // A small office keeps the desk near the wall so the doorway stays clear.
+  const deskZ =
+    b.z + (roomy ? Math.min(1.9, b.d * 0.36) : Math.min(1.3, b.d * 0.26));
+  // Along the back wall: a footprint is 1 by 1, so 0.65 clears the wall.
+  const backZ = b.z + 0.65;
 
   const pieces: TemplatePiece[] = [
-    { key: "rug", catalogId: "rug", x: cx, z: rugZ, rotation: 0 },
+    { key: "rug", catalogId: "rug", x: cx, z: deskZ + 0.55, rotation: 0 },
     { key: "desk", catalogId: "desk_oak", x: cx, z: deskZ, rotation: 0 },
     {
       key: "chair",
@@ -73,19 +69,20 @@ export function personalOfficeTemplate(room: OfficeRoom): FurnitureItem[] {
       z: deskZ + 1.1,
       rotation: 180,
     },
-    {
-      key: "plant",
-      catalogId: "plant",
-      x: b.x + b.w - 0.7,
-      z: b.z + 0.75,
-      rotation: 0,
-    },
+    { key: "plant", catalogId: "plant", x: b.x + 0.65, z: backZ, rotation: 0 },
     {
       key: "shelf",
       catalogId: "shelf",
-      x: b.x + 0.65,
-      z: shelfZ,
-      rotation: 90,
+      x: b.x + 1.75,
+      z: backZ,
+      rotation: 0,
+    },
+    {
+      key: "lamp",
+      catalogId: "lamp",
+      x: b.x + b.w - 0.65,
+      z: backZ,
+      rotation: 0,
     },
   ];
 

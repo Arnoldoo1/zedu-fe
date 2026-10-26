@@ -427,8 +427,8 @@ export const FURNITURE_CATALOG: CatalogItem[] = [
     rotatable: true,
     collision: true,
     maxPerRoom: 8,
-    color: "#7c5cff",
-    blurb: "Purple mesh back, five-star base.",
+    color: "#40514a",
+    blurb: "Mesh back, five-star base.",
   },
   {
     id: "table_meeting",
@@ -504,7 +504,7 @@ export const FURNITURE_CATALOG: CatalogItem[] = [
     rotatable: true,
     collision: false,
     maxPerRoom: 2,
-    color: "#7c5cff",
+    color: "#2d7663",
     blurb: "Defines a zone without a wall.",
   },
   {
