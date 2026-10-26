@@ -7,6 +7,7 @@ import {
   prepareChannelSubscription,
   releaseChannelSubscription,
 } from "~/lib/centrifugo/shared-centrifuge";
+import { createZoeRequest } from "~/lib/zoe/request-contract";
 import type {
   OfficeApiItem,
   OfficeApiRoom,
@@ -23,6 +24,11 @@ import type {
   OfficeZoeContext,
 } from "~/types/office";
 import { ROOMS } from "~/app/office/_components/office-data";
+import {
+  ownsPersonalOffice,
+  personalOfficeTemplate,
+  withPersonalOfficeDefaults,
+} from "~/app/office/_components/office-layout";
 
 /** The API speaks two dimensions, the scene works in three. */
 function toSceneItem(item: OfficeApiItem): OfficeFurnitureItem {
@@ -383,8 +389,15 @@ export class LiveOfficeSource implements OfficeSource {
     );
 
     for (const [roomId, layout] of Object.entries(data.layouts ?? {})) {
-      this.initialLayouts[roomId] = (layout.items ?? []).map(toSceneItem);
+      this.initialLayouts[roomId] = (layout.items ?? []).map((item) => ({
+        ...toSceneItem(item),
+        roomId,
+      }));
     }
+    this.initialLayouts = withPersonalOfficeDefaults(
+      this.rooms,
+      this.initialLayouts
+    );
 
     const avatarResponse = await GetRequest("/users/me/avatar");
     const avatar = avatarResponse?.data?.data as OfficeAvatarConfig | undefined;
@@ -446,6 +459,13 @@ export class LiveOfficeSource implements OfficeSource {
   }
 
   async resetLayout(roomId: string) {
+    const room = this.rooms.find((candidate) => candidate.id === roomId);
+    if (room && ownsPersonalOffice(room, this.userId)) {
+      const defaults = personalOfficeTemplate(room);
+      await this.saveLayout(roomId, defaults);
+      return defaults;
+    }
+
     const layout = unwrap<{ items?: OfficeApiItem[] } | undefined>(
       await PostRequest(
         `/office/rooms/${encodeRoomId(roomId)}/layout/reset`,
@@ -453,7 +473,10 @@ export class LiveOfficeSource implements OfficeSource {
       ),
       "The room could not be reset."
     );
-    return (layout?.items ?? []).map(toSceneItem);
+    return (layout?.items ?? []).map((item) => ({
+      ...toSceneItem(item),
+      roomId,
+    }));
   }
 
   async saveAvatar(avatar: OfficeAvatarConfig) {
@@ -505,15 +528,7 @@ export class LiveOfficeSource implements OfficeSource {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({
-        messages: [{ role: "user", content: question }],
-        context: {
-          location: "office",
-          buildingId: this.orgId,
-          room: context.room,
-          nearbyUsers: context.nearbyUsers,
-        },
-      }),
+      body: JSON.stringify(createZoeRequest(question, context, this.orgId)),
     });
 
     if (!response.ok) {

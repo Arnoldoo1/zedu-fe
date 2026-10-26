@@ -10,6 +10,7 @@ export function ThemeToaster() {
     <Toaster
       position="top-right"
       richColors
+      closeButton
       theme={resolvedTheme === "dark" ? "dark" : "light"}
     />
   );

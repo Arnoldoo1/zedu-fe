@@ -15,6 +15,7 @@ import {
   furnitureAabb,
   validatePlacement,
 } from "../office-data";
+import { floorLayoutItems, roomLayoutItems } from "../office-layout";
 import type { OfficeFloor, OfficeOccupant } from "~/types/office";
 import { TowerScene, type TowerOffice } from "./tower-scene";
 import { INK_CSS, PALETTE, PAPER_CSS } from "./palette";
@@ -611,6 +612,8 @@ export class OfficeEngine {
   setView(view: "floor" | "tower") {
     if (this.view === view) return;
     this.view = view;
+    this.towerPointer = null;
+    this.setTowerHover(null);
     this.applyBackdrop(view);
 
     const floorGroups = [
@@ -716,16 +719,18 @@ export class OfficeEngine {
   pulseOffice(roomId: string, floorIndex: number | null) {
     if (!this.tower) return;
     this.tower.pulse(roomId);
-    if (floorIndex !== null) this.tower.focusFloor(floorIndex);
+    if (floorIndex !== null) this.focusTowerFloor(floorIndex);
   }
 
   /** Frame one storey of the tower, or the whole tower when null. */
   focusTowerFloor(index: number | null) {
+    this.setTowerHover(null);
     this.tower?.focusFloor(index);
   }
 
   /** Frame one office: the camera pans along the facade to reach it. */
   focusTowerRoom(roomId: string | null) {
+    this.setTowerHover(null);
     this.tower?.focusRoom(roomId);
   }
 
@@ -762,6 +767,8 @@ export class OfficeEngine {
   private ghostReason: string | null = null;
   private lastGhostState = "";
 
+  private towerPointer: { x: number; y: number } | null = null;
+  private towerHover: TowerOffice | null = null;
   private pointerDown = false;
   private pointerStart = { x: 0, y: 0 };
   private pointerDragged = false;
@@ -784,6 +791,7 @@ export class OfficeEngine {
   private boundPointerDown: (event: PointerEvent) => void;
   private boundPointerMove: (event: PointerEvent) => void;
   private boundPointerUp: (event: PointerEvent) => void;
+  private boundPointerLeave: () => void;
   private boundWheel: (event: WheelEvent) => void;
   private boundResize: () => void;
 
@@ -875,6 +883,10 @@ export class OfficeEngine {
     this.boundPointerDown = (event) => this.onPointerDown(event);
     this.boundPointerMove = (event) => this.onPointerMove(event);
     this.boundPointerUp = (event) => this.onPointerUp(event);
+    this.boundPointerLeave = () => {
+      this.towerPointer = null;
+      this.setTowerHover(null);
+    };
     this.boundWheel = (event) => this.onWheel(event);
     this.boundResize = () => this.resize();
 
@@ -887,6 +899,10 @@ export class OfficeEngine {
     this.renderer.domElement.addEventListener(
       "pointerdown",
       this.boundPointerDown
+    );
+    this.renderer.domElement.addEventListener(
+      "pointerleave",
+      this.boundPointerLeave
     );
     window.addEventListener("pointermove", this.boundPointerMove);
     window.addEventListener("pointerup", this.boundPointerUp);
@@ -936,21 +952,12 @@ export class OfficeEngine {
 
   /**
    * Only the furniture of rooms on the floor being shown is drawn: offices on
-   * different member floors share the same coordinates.
+   * different member floors share the same coordinates, so the room id on the
+   * item decides, not the position alone.
    */
   private visibleFurniture(): FurnitureItem[] {
     if (!this.isLive) return this.furnitureItems;
-    return this.furnitureItems.filter((item) => {
-      const room = this.allRooms.find(
-        (candidate) =>
-          (candidate.floorIndex ?? 0) === this.activeFloor &&
-          item.x >= candidate.bounds.x &&
-          item.x <= candidate.bounds.x + candidate.bounds.w &&
-          item.z >= candidate.bounds.z &&
-          item.z <= candidate.bounds.z + candidate.bounds.d
-      );
-      return Boolean(room);
-    });
+    return floorLayoutItems(this.furnitureItems, this.rooms);
   }
 
   private renderFurniture() {
@@ -1132,6 +1139,10 @@ export class OfficeEngine {
     this.renderer.domElement.removeEventListener(
       "pointerdown",
       this.boundPointerDown
+    );
+    this.renderer.domElement.removeEventListener(
+      "pointerleave",
+      this.boundPointerLeave
     );
     this.renderer.domElement.removeEventListener("wheel", this.boundWheel);
 
@@ -2103,7 +2114,7 @@ export class OfficeEngine {
           break;
         }
         case "personal": {
-          this.addPrivateOffice(room);
+          this.addWallArt(cx, b.z, Math.min(1.2, b.w * 0.28));
           break;
         }
         case "area": {
@@ -4204,9 +4215,43 @@ export class OfficeEngine {
     this.pointerNdc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   }
 
+  private setTowerHover(office: TowerOffice | null) {
+    this.tower?.setHovered(office?.roomId ?? null);
+    if (this.towerHover === office) return;
+    this.towerHover = office;
+    this.callbacks.onTowerHover?.(office);
+  }
+
+  private updateTowerHover() {
+    const point = this.towerPointer;
+    const canvas = this.renderer.domElement;
+    if (
+      this.view !== "tower" ||
+      this.pointerDown ||
+      !point ||
+      document.elementFromPoint(point.x, point.y) !== canvas
+    ) {
+      this.setTowerHover(null);
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      this.setTowerHover(null);
+      return;
+    }
+    this.pointerNdc.set(
+      ((point.x - rect.left) / rect.width) * 2 - 1,
+      -((point.y - rect.top) / rect.height) * 2 + 1
+    );
+    // Raycasting runs before render, so it needs the camera's new world matrix.
+    this.camera.updateMatrixWorld();
+    this.setTowerHover(this.tower?.pick(this.pointerNdc, this.camera) ?? null);
+  }
+
   private onPointerDown(event: PointerEvent) {
     if (event.button !== 0) return;
     this.pointerDown = true;
+    if (this.view === "tower") this.setTowerHover(null);
     this.pointerDragged = false;
     this.pointerStart = { x: event.clientX, y: event.clientY };
     this.updatePointer(event);
@@ -4217,11 +4262,9 @@ export class OfficeEngine {
 
   private onPointerMove(event: PointerEvent) {
     if (this.view === "tower") {
+      this.towerPointer = { x: event.clientX, y: event.clientY };
       if (!this.pointerDown) {
-        this.updatePointer(event);
-        const office = this.tower?.pick(this.pointerNdc, this.camera) ?? null;
-        this.tower?.setHovered(office?.roomId ?? null);
-        this.callbacks.onTowerHover?.(office);
+        this.updateTowerHover();
         return;
       }
       const moveX = event.clientX - this.pointerStart.x;
@@ -4318,6 +4361,10 @@ export class OfficeEngine {
 
   private onWheel(event: WheelEvent) {
     event.preventDefault();
+    if (this.view === "tower") {
+      this.towerPointer = { x: event.clientX, y: event.clientY };
+      this.setTowerHover(null);
+    }
     this.cameraDistance = clamp(
       this.cameraDistance + event.deltaY * 0.008,
       5.5,
@@ -4419,10 +4466,8 @@ export class OfficeEngine {
     if (!hovered || hovered.id !== current.id) {
       return "That spot is outside this room.";
     }
-    const items = this.furnitureItems.filter(
-      (item) =>
-        item.id !== this.editState.movingId &&
-        this.roomAtPosition(item.x, item.z)?.id === current.id
+    const items = roomLayoutItems(this.furnitureItems, current).filter(
+      (item) => item.id !== this.editState.movingId
     );
     return validatePlacement(items, catalogId, x, z, rotation, current);
   }
@@ -4619,6 +4664,7 @@ export class OfficeEngine {
     if (this.view === "tower") {
       this.tower?.update(elapsed);
       this.updateTowerCamera(dt);
+      this.updateTowerHover();
       this.renderer.render(this.scene, this.camera);
       return;
     }

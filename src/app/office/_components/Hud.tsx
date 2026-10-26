@@ -113,7 +113,7 @@ export default function Hud({
         <div className="pointer-events-auto flex min-w-0 items-center gap-2.5 sm:gap-3">
           <div className="office-glass flex items-center gap-2.5 rounded-2xl px-3 py-2 sm:px-3.5">
             <img
-              src="/login_logo.svg"
+              src="/zedu_white.png"
               alt="Zedu"
               className="h-5 w-auto sm:h-6"
             />
