@@ -408,3 +408,38 @@ test("OfficeDemo placeFurniture sets roomId on new items", () => {
     "placeFurniture must attach roomId: room.id to newly placed item"
   );
 });
+
+test("personalOfficeTemplate furnishes the reviewed layout: desk out in the room, back wall lined", () => {
+  const memberOffice = {
+    id: "personal:frank",
+    kind: "personal",
+    name: "Frank's Office",
+    ownerId: "user_frank",
+    bounds: { x: 0, z: 0, w: 5, d: 5.4 },
+    door: { x: 2.5, z: 5.4 },
+  };
+  const items = personalOfficeTemplate(memberOffice);
+  const byId = Object.fromEntries(items.map((item) => [item.catalogId, item]));
+
+  for (const id of [
+    "rug",
+    "desk_oak",
+    "chair_ergo",
+    "plant",
+    "shelf",
+    "lamp",
+  ]) {
+    assert.ok(byId[id], `Contains ${id}`);
+  }
+  // The desk stands in the room, not against the back wall, on its own rug.
+  assert.ok(byId.desk_oak.z >= 1.5, "Desk is out in the room");
+  assert.ok(byId.chair_ergo.z > byId.desk_oak.z, "Chair is behind the desk");
+  assert.ok(
+    Math.abs(byId.rug.z - byId.desk_oak.z) < 1,
+    "Rug lies under the desk and chair"
+  );
+  // Plant, bookshelf and lamp line the back wall.
+  for (const id of ["plant", "shelf", "lamp"]) {
+    assert.ok(byId[id].z < 1, `${id} is against the back wall`);
+  }
+});
