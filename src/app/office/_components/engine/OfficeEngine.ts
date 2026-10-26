@@ -2114,7 +2114,12 @@ export class OfficeEngine {
           break;
         }
         case "personal": {
-          this.addWallArt(cx, b.z, Math.min(1.2, b.w * 0.28));
+          // Right of centre: the starter bookshelf stands to its left.
+          this.addWallArt(
+            cx + (b.w >= 4.2 ? 0.55 : 0),
+            b.z,
+            Math.min(1.2, b.w * 0.28)
+          );
           break;
         }
         case "area": {
@@ -2133,39 +2138,6 @@ export class OfficeEngine {
         }
       }
     }
-  }
-
-  /**
-   * A private office, not a cubicle: a desk on the wall you enter against,
-   * storage, a rug and something green. A 5 by 5.4 room holds all of it and
-   * still leaves the walk-in point clear.
-   */
-  private addPrivateOffice(room: OfficeRoom) {
-    const b = room.bounds;
-    const cx = b.x + b.w / 2;
-    const roomy = b.w >= 4.2 && b.d >= 4.2;
-    // A furnished office: the desk stands out in the room on its own rug,
-    // with a full bookshelf, a reading lamp and a plant along the back wall.
-    const deskZ = b.z + (roomy ? Math.min(1.9, b.d * 0.36) : 1.3);
-    if (roomy) {
-      this.addRug(
-        cx,
-        deskZ + 0.5,
-        Math.min(b.w - 1.4, 2.8),
-        Math.min(b.d * 0.4, 2.1),
-        PALETTE.accent,
-        // The room's floor pad is 0.1 thick; the rug lies on top of it.
-        0.1
-      );
-    }
-    this.addWorkstation(cx, deskZ);
-    this.addWallArt(cx, b.z, Math.min(1.2, b.w * 0.28));
-    if (roomy) {
-      this.addShelf(b.x + 1.25, b.z + 0.32, 0);
-      this.addLamp(b.x + b.w - 0.6, b.z + 0.6);
-      this.addCabinet(b.x + 0.6, b.z + b.d - 1.3, 90);
-    }
-    this.addPlant(b.x + 0.55, b.z + 0.6);
   }
 
   /** A desk with its screen, keyboard and chair — what an office is judged by. */
@@ -2537,7 +2509,10 @@ export class OfficeEngine {
     const catalog = CATALOG_BY_ID[item.catalogId];
     if (!catalog) return null;
     const group = this.buildFurnitureMesh(item.catalogId, catalog.color);
-    group.position.set(item.x, 0, item.z);
+    // A rug is 2cm thick; in the live building it lies on the room's 0.1 floor
+    // pad instead of being drawn underneath it.
+    const onPad = this.isLive && item.catalogId === "rug" ? 0.1 : 0;
+    group.position.set(item.x, onPad, item.z);
     group.rotation.y = (item.rotation * Math.PI) / 180;
     group.userData.furnitureId = item.id;
     if (SEAT_HEIGHT[item.catalogId]) {
@@ -2830,30 +2805,38 @@ export class OfficeEngine {
         break;
       }
       case "shelf": {
-        add(new THREE.BoxGeometry(0.9, 1.8, 0.35), wood, 0, 0.9, 0);
-        for (const y of [0.45, 0.85, 1.25, 1.65]) {
-          add(
-            new THREE.BoxGeometry(0.84, 0.04, 0.3),
-            new THREE.MeshStandardMaterial({ color: dark, roughness: 0.9 }),
-            0,
-            y,
-            0.02
-          );
+        // Open at the front, so the books on every shelf can be seen.
+        add(new THREE.BoxGeometry(0.9, 1.8, 0.04), wood, 0, 0.9, -0.155);
+        for (const x of [-0.425, 0.425]) {
+          add(new THREE.BoxGeometry(0.05, 1.8, 0.35), wood, x, 0.9, 0);
+        }
+        for (const y of [0.03, 0.47, 0.91, 1.35, 1.78]) {
+          add(new THREE.BoxGeometry(0.8, 0.04, 0.33), wood, 0, y, 0);
         }
         const bookColors = [
-          0x7141f8, 0x22d3ee, 0xf472b6, 0xf59e0b, 0x34d399, 0xe5e7eb,
+          PALETTE.accent,
+          PALETTE.screen,
+          PALETTE.pot,
+          PALETTE.glow,
+          PALETTE.sofa,
+          PALETTE.wallShade,
         ];
-        for (let i = 0; i < 12; i += 1) {
-          add(
-            new THREE.BoxGeometry(0.08, 0.24, 0.2),
-            new THREE.MeshStandardMaterial({
-              color: bookColors[i % bookColors.length],
-              roughness: 0.9,
-            }),
-            -0.3 + (i % 5) * 0.14,
-            0.58 + Math.floor(i / 5) * 0.4,
-            0.03
-          );
+        for (let shelf = 0; shelf < 4; shelf += 1) {
+          for (let i = 0, x = -0.36; x < 0.3; i += 1) {
+            const w = 0.06 + ((shelf * 3 + i) % 3) * 0.02;
+            const h = 0.26 + ((shelf + i) % 3) * 0.04;
+            add(
+              new THREE.BoxGeometry(w, h, 0.22),
+              new THREE.MeshStandardMaterial({
+                color: bookColors[(shelf * 2 + i) % bookColors.length],
+                roughness: 0.9,
+              }),
+              x + w / 2,
+              0.05 + shelf * 0.44 + h / 2,
+              0.02
+            );
+            x += w + 0.015;
+          }
         }
         break;
       }
@@ -3783,19 +3766,12 @@ export class OfficeEngine {
     this.addCollider(x - 0.85, x + 0.85, z - 0.45, z + 0.45);
   }
 
-  private addRug(
-    x: number,
-    z: number,
-    w: number,
-    d: number,
-    color: number,
-    lift = 0
-  ) {
+  private addRug(x: number, z: number, w: number, d: number, color: number) {
     const rug = new THREE.Mesh(
       new THREE.BoxGeometry(w, 0.02, d),
       new THREE.MeshStandardMaterial({ color, roughness: 1 })
     );
-    rug.position.set(x, 0.03 + lift, z);
+    rug.position.set(x, 0.03, z);
     rug.receiveShadow = true;
     this.staticGroup.add(rug);
     const inner = new THREE.Mesh(
@@ -3805,7 +3781,7 @@ export class OfficeEngine {
         roughness: 1,
       })
     );
-    inner.position.set(x, 0.04 + lift, z);
+    inner.position.set(x, 0.04, z);
     this.staticGroup.add(inner);
   }
 
@@ -3870,62 +3846,35 @@ export class OfficeEngine {
     this.addCollider(x - 0.4, x + 0.4, z - 0.4, z + 0.4);
   }
 
-  /** An open bookshelf: back, sides and four shelves of books facing +z. */
   private addShelf(x: number, z: number, rotation: number) {
     const group = new THREE.Group();
-    const wood = new THREE.MeshStandardMaterial({
-      color: PALETTE.desk,
-      roughness: 0.8,
-    });
-    const panel = (
-      w: number,
-      h: number,
-      d: number,
-      px: number,
-      py: number,
-      pz: number
-    ) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wood);
-      mesh.position.set(px, py, pz);
-      mesh.castShadow = true;
-      group.add(mesh);
-    };
-    panel(0.9, 1.8, 0.04, 0, 0.9, -0.155);
-    panel(0.05, 1.8, 0.35, -0.425, 0.9, 0);
-    panel(0.05, 1.8, 0.35, 0.425, 0.9, 0);
-    for (const y of [0.03, 0.47, 0.91, 1.35, 1.78])
-      panel(0.8, 0.04, 0.33, 0, y, 0);
-    const colors = [
-      PALETTE.accent,
-      PALETTE.screen,
-      PALETTE.pot,
-      PALETTE.glow,
-      PALETTE.sofa,
-      PALETTE.wallShade,
-    ];
-    for (let shelf = 0; shelf < 4; shelf += 1) {
-      for (let i = 0, bx = -0.36; bx < 0.3; i += 1) {
-        const w = 0.06 + ((shelf * 3 + i) % 3) * 0.02;
-        const h = 0.26 + ((shelf + i) % 3) * 0.04;
-        const book = new THREE.Mesh(
-          new THREE.BoxGeometry(w, h, 0.22),
-          new THREE.MeshStandardMaterial({
-            color: colors[(shelf * 2 + i) % colors.length],
-            roughness: 0.9,
-          })
-        );
-        book.position.set(bx + w / 2, 0.05 + shelf * 0.44 + h / 2, 0.02);
-        group.add(book);
-        bx += w + 0.015;
-      }
+    const frame = new THREE.Mesh(
+      new THREE.BoxGeometry(0.9, 1.8, 0.35),
+      new THREE.MeshStandardMaterial({ color: PALETTE.desk, roughness: 0.8 })
+    );
+    frame.position.y = 0.9;
+    frame.castShadow = true;
+    group.add(frame);
+    const colors = [0x7141f8, 0x22d3ee, 0xf472b6, 0xf59e0b, 0x34d399, 0xe5e7eb];
+    for (let i = 0; i < 10; i += 1) {
+      const book = new THREE.Mesh(
+        new THREE.BoxGeometry(0.08, 0.24, 0.2),
+        new THREE.MeshStandardMaterial({
+          color: colors[i % colors.length],
+          roughness: 0.9,
+        })
+      );
+      book.position.set(
+        -0.3 + (i % 4) * 0.16,
+        0.58 + Math.floor(i / 4) * 0.38,
+        0.03
+      );
+      group.add(book);
     }
     group.position.set(x, 0, z);
     group.rotation.y = (rotation * Math.PI) / 180;
     this.staticGroup.add(group);
-    const across = rotation % 180 === 0;
-    const hw = across ? 0.5 : 0.3;
-    const hd = across ? 0.3 : 0.5;
-    this.addCollider(x - hw, x + hw, z - hd, z + hd);
+    this.addCollider(x - 0.3, x + 0.3, z - 0.5, z + 0.5);
   }
 
   private addCabinet(x: number, z: number, rotation: number) {
