@@ -1,6 +1,11 @@
 "use client";
 
-import { GetRequest, PostRequest, PutRequest } from "~/utils/new-request";
+import {
+  BuzzRequest,
+  GetRequest,
+  PostRequest,
+  PutRequest,
+} from "~/utils/new-request";
 import {
   getSharedCentrifuge,
   getSubscriptionToken,
@@ -29,9 +34,6 @@ import {
   personalOfficeTemplate,
   withPersonalOfficeDefaults,
 } from "~/app/office/_components/office-layout";
-
-/** The REST prefix every office request is built on. */
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL;
 
 /** The API speaks two dimensions, the scene works in three. */
 function toSceneItem(item: OfficeApiItem): OfficeFurnitureItem {
@@ -594,30 +596,16 @@ export class LiveOfficeSource implements OfficeSource {
     z: number,
     yaw: number
   ): Promise<number> {
-    // Movement is published several times a second, so it goes out through a
-    // plain fetch instead of the toast helpers: a rejected attempt (409, 429
-    // or a network blip) must stay silent and hand the status back, the way
-    // the office already asks Zoe without an interceptor in between.
-    const token = localStorage.getItem("token") ?? "";
-    const url = `${BASE_URL}/office/rooms/${encodeRoomId(roomId)}/presence`;
-
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          position: { x, y: 0, z },
-          rotation: yaw,
-        }),
-      });
-      return response.status;
-    } catch {
-      // No answer at all: 0 tells the caller to back off and try again later.
-      return 0;
-    }
+    // Movement goes out several times a second, so it uses the silent request
+    // helper: a refused attempt (409, 429 or a network blip) must not raise a
+    // toast, it only hands its status back to the caller to back off with.
+    const response = await BuzzRequest(
+      `/office/rooms/${encodeRoomId(roomId)}/presence`,
+      { position: { x, y: 0, z }, rotation: yaw }
+    );
+    const status = response?.status ?? response?.response?.status;
+    // No answer at all: 0 tells the caller to back off and try again later.
+    return typeof status === "number" ? status : 0;
   }
 
   async fetchOccupants(roomId: string): Promise<OfficeOccupant[]> {
@@ -634,14 +622,6 @@ export class LiveOfficeSource implements OfficeSource {
       ) ?? []
     );
   }
-
-  private roster = new Map<string, OfficeOccupant>();
-  /**
-   * Raised on every subscribe cycle, so a snapshot requested by an older
-   * cycle that lands late is dropped instead of overwriting a roster that
-   * has already been resynchronized.
-   */
-  private rosterGeneration = 0;
 
   subscribePresence(
     roomId: string,
@@ -662,15 +642,35 @@ export class LiveOfficeSource implements OfficeSource {
     });
 
     let cancelled = false;
-    /** People the stream reported as gone while the snapshot is in flight. */
-    let leftDuringSync: Set<string> | null = null;
-    const emit = () => onPresence([...this.roster.values()]);
+    /**
+     * The roster belongs to this subscription and to no other: two rooms can
+     * never mix their people, and closing one room cannot empty another. It is
+     * only ever replaced whole, never cleared first, so a snapshot landing
+     * late cannot make the avatars disappear in between.
+     */
+    let roster = new Map<string, OfficeOccupant>();
+    /** Raised on every resync, so a snapshot an older one requested is dropped. */
+    let syncGeneration = 0;
+    /**
+     * What the stream carried while a snapshot was being read: a join or a
+     * departure that happened after the snapshot was taken.
+     */
+    let inFlight: {
+      left: Set<string>;
+      upserts: Map<string, OfficeOccupant>;
+    } | null = null;
+
+    const emit = () => onPresence([...roster.values()]);
 
     /** A record only overwrites the one held when it is not provably older. */
-    const merge = (occupant: OfficeOccupant) => {
-      const held = this.roster.get(occupant.userId);
-      if (held && isOlderOccupant(occupant, held)) return;
-      this.roster.set(occupant.userId, occupant);
+    const apply = (
+      target: Map<string, OfficeOccupant>,
+      occupant: OfficeOccupant
+    ) => {
+      const held = target.get(occupant.userId);
+      if (held && isOlderOccupant(occupant, held)) return false;
+      target.set(occupant.userId, occupant);
+      return true;
     };
 
     // The stream only carries what happens from the subscription onwards, so
@@ -678,27 +678,39 @@ export class LiveOfficeSource implements OfficeSource {
     // join and after every reconnect alike, because publications missed while
     // the connection was down cannot be recovered any other way.
     const resync = () => {
-      const generation = ++this.rosterGeneration;
-      const left = new Set<string>();
-      leftDuringSync = left;
-      this.roster.clear();
+      const generation = ++syncGeneration;
+      const ticket = {
+        left: new Set<string>(),
+        upserts: new Map<string, OfficeOccupant>(),
+      };
+      inFlight = ticket;
 
       void this.fetchOccupants(roomId)
         .then((occupants) => {
           // A newer resync or a teardown owns the roster now.
-          if (cancelled || generation !== this.rosterGeneration) return;
+          if (cancelled || generation !== syncGeneration) return;
+          if (inFlight === ticket) inFlight = null;
+
+          // The snapshot and the stream are folded into a new map that is
+          // swapped in one step, so nobody is missing while it is rebuilt.
+          const next = new Map<string, OfficeOccupant>();
           for (const occupant of occupants) {
             // A departure the stream already carried is newer than this
             // snapshot, so that person is not brought back from it.
-            if (left.has(occupant.userId)) continue;
-            merge(occupant);
+            if (ticket.left.has(occupant.userId)) continue;
+            next.set(occupant.userId, occupant);
           }
-          if (leftDuringSync === left) leftDuringSync = null;
+          for (const [userId, occupant] of ticket.upserts) {
+            const held = next.get(userId);
+            if (held && isOlderOccupant(occupant, held)) continue;
+            next.set(userId, occupant);
+          }
+          roster = next;
           emit();
         })
         .catch(() => {
           // The subscription still delivers everyone who arrives later.
-          if (leftDuringSync === left) leftDuringSync = null;
+          if (inFlight === ticket) inFlight = null;
         });
     };
 
@@ -708,11 +720,14 @@ export class LiveOfficeSource implements OfficeSource {
       if (!presence) return;
 
       if (eventType === "leave") {
-        this.roster.delete(presence.userId);
-        leftDuringSync?.add(presence.userId);
+        roster.delete(presence.userId);
+        inFlight?.upserts.delete(presence.userId);
+        inFlight?.left.add(presence.userId);
       } else {
-        leftDuringSync?.delete(presence.userId);
-        merge(presence);
+        inFlight?.left.delete(presence.userId);
+        // Only a record that actually took hold has to survive the snapshot.
+        if (apply(roster, presence))
+          inFlight?.upserts.set(presence.userId, presence);
       }
 
       // Emit the complete roster so the UI never has stale entries.
@@ -737,13 +752,13 @@ export class LiveOfficeSource implements OfficeSource {
 
     return () => {
       cancelled = true;
-      this.rosterGeneration++;
+      syncGeneration++;
       subscription.off("publication", onPublication);
       subscription.off("subscribed", onSubscribed);
       subscription.off("unsubscribed", onUnsubscribed);
       releaseChannelSubscription(client, channel, subscription);
-      // Clear the roster for this room so a subsequent subscription starts clean.
-      this.roster.clear();
+      // The roster dies with the subscription it belongs to, so the next room
+      // starts from its own snapshot instead of inheriting this one.
     };
   }
 

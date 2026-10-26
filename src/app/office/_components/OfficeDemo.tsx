@@ -31,6 +31,7 @@ import {
   validatePlacement,
 } from "./office-data";
 import { demoSource, demoTowerOffices } from "./demo-office-source";
+import { useOfficePresence } from "./use-office-presence";
 import type {
   OfficeOccupant,
   OfficeSource,
@@ -254,10 +255,6 @@ export default function OfficeDemo({
   const [presenceState, setPresenceState] = useState<"connecting" | "live">(
     source.mode === "demo" ? "live" : "connecting"
   );
-  /** The room whose presence subscription is live right now, if any. */
-  const [presenceLiveRoom, setPresenceLiveRoom] = useState<string | null>(null);
-  /** The room the server was told the player is standing in, if any. */
-  const [enteredRoomId, setEnteredRoomId] = useState<string | null>(null);
   const [nearZoe, setNearZoe] = useState(false);
 
   const [towerOpen, setTowerOpen] = useState(false);
@@ -328,15 +325,6 @@ export default function OfficeDemo({
   const dirtyLayoutsRef = useRef(new Map<string, FurnitureItem[]>());
   const queuedLayoutsRef = useRef(new Map<string, FurnitureItem[]>());
   const saveQueueRef = useRef(Promise.resolve());
-  const enteredRoomRef = useRef<string | null>(null);
-  const enterAttemptRef = useRef<string | null>(null);
-  /** The last pose the engine reported, kept for the movement publisher. */
-  const latestPoseRef = useRef({ ...player });
-  const poseDirtyRef = useRef(false);
-  const poseInFlightRef = useRef(false);
-  const nextPublishAtRef = useRef(0);
-  const lastPublishedAtRef = useRef(0);
-  const reenteredRef = useRef(false);
 
   const currentRoom = roomId ? (roomById[roomId] ?? null) : null;
   const currentItems = currentRoom ? (layouts[currentRoom.id] ?? []) : [];
@@ -887,158 +875,16 @@ export default function OfficeDemo({
     engineRef.current?.setOccupants(occupants);
   }, []);
 
-  // The live office listens for real presence over Centrifugo. Presence is
-  // published per room, so the subscription follows the room the user is in.
-  // The state callback also names the room it belongs to: only that room may
-  // claim to be live, and tearing the subscription down withdraws the claim,
-  // so a rapid room change can never leave the previous room's state behind.
-  useEffect(() => {
-    if (source.mode !== "live" || phase !== "office") return;
-
-    const room = roomId ?? "lobby";
-    const stop = source.subscribePresence(room, mergePresence, (state) => {
-      setPresenceState(state);
-      setPresenceLiveRoom((current) =>
-        state === "live" ? room : current === room ? null : current
-      );
-    });
-
-    return () => {
-      stop();
-      setPresenceLiveRoom((current) => (current === room ? null : current));
-    };
-  }, [source, phase, roomId, mergePresence]);
-
-  // The room is entered only once its own subscription is live, so entry is
-  // sequenced with the stream that reports who is inside it, and it is
-  // attempted at most once per live stretch. The request helper reports a
-  // failure on its own; it is not toasted again here.
-  useEffect(() => {
-    if (source.mode !== "live" || phase !== "office" || !roomId) return;
-    if (presenceLiveRoom !== roomId) return;
-    if (enteredRoomRef.current === roomId || enterAttemptRef.current === roomId)
-      return;
-
-    enterAttemptRef.current = roomId;
-    let cancelled = false;
-
-    source
-      .enterRoom(roomId)
-      .then(() => {
-        if (!cancelled) {
-          enteredRoomRef.current = roomId;
-          setEnteredRoomId(roomId);
-          return;
-        }
-        // The player moved on while entry was still in flight, so the server
-        // must not be left holding a room nobody is in any more.
-        source.leaveRoom(roomId).catch(() => {
-          // The request helper already reported the failure.
-        });
-      })
-      .catch(() => {
-        if (!cancelled) enterAttemptRef.current = null;
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [source, phase, roomId, presenceLiveRoom]);
-
-  // Only a room that was actually entered is ever left.
-  useEffect(() => {
-    if (source.mode !== "live") return;
-
-    return () => {
-      const entered = enteredRoomRef.current;
-      enteredRoomRef.current = null;
-      enterAttemptRef.current = null;
-      setEnteredRoomId(null);
-      if (!entered) return;
-      source.leaveRoom(entered).catch(() => {
-        // The request helper already reported the failure.
-      });
-    };
-  }, [source, phase, roomId]);
-
-  // Local movement goes out at most five times a second while the player
-  // walks, and once every half minute while they stand still, so the room
-  // always knows where they are without a request per frame. Publishing starts
-  // only once this room is entered with its own subscription live, and stops
-  // on a room change, a disconnect or an unmount. A 409 re-enters the room
-  // once instead of retrying; a 429 or any other refusal backs off instead of
-  // looping.
-  useEffect(() => {
-    if (source.mode !== "live" || phase !== "office") return;
-    if (!roomId || presenceLiveRoom !== roomId || enteredRoomId !== roomId) {
-      return;
-    }
-
-    const MIN_GAP_MS = 200;
-    const BACKOFF_MS = 1000;
-    const HEARTBEAT_MS = 30000;
-
-    reenteredRef.current = false;
-    lastPublishedAtRef.current = 0;
-    nextPublishAtRef.current = 0;
-    latestPoseRef.current = { ...stateRef.current.player };
-
-    const publish = () => {
-      if (poseInFlightRef.current) return;
-      const now = Date.now();
-      if (now < nextPublishAtRef.current) return;
-
-      const sentAt = lastPublishedAtRef.current;
-      if (sentAt > 0) {
-        const needed = poseDirtyRef.current ? MIN_GAP_MS : HEARTBEAT_MS;
-        if (now - sentAt < needed) return;
-      }
-
-      const pose = latestPoseRef.current;
-      poseInFlightRef.current = true;
-      source
-        .sendPosition(roomId, pose.x, pose.z, pose.yaw)
-        .then((status) => {
-          poseInFlightRef.current = false;
-          if (status >= 200 && status < 300) {
-            const current = latestPoseRef.current;
-            if (
-              current.x === pose.x &&
-              current.z === pose.z &&
-              current.yaw === pose.yaw
-            ) {
-              // Nothing moved while the request was in flight, so the pose is
-              // settled until the engine reports a new one.
-              poseDirtyRef.current = false;
-            }
-            lastPublishedAtRef.current = Date.now();
-            return;
-          }
-          if (status === 409 && !reenteredRef.current) {
-            // not_in_room: the entry did not stick, so enter once and let the
-            // next attempt publish again.
-            reenteredRef.current = true;
-            nextPublishAtRef.current = Date.now() + BACKOFF_MS;
-            source.enterRoom(roomId).catch(() => {
-              // The request helper already reported the failure.
-            });
-            return;
-          }
-          // 429, a refused status or no answer at all: wait before trying
-          // again rather than pushing in a tight loop.
-          nextPublishAtRef.current = Date.now() + BACKOFF_MS;
-        })
-        .catch(() => {
-          poseInFlightRef.current = false;
-          nextPublishAtRef.current = Date.now() + BACKOFF_MS;
-        });
-    };
-
-    const timer = window.setInterval(publish, MIN_GAP_MS);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [source, phase, roomId, presenceLiveRoom, enteredRoomId]);
+  // Presence, room entry and movement publishing all follow the room the user
+  // is in, and all of them are sequenced in one place.
+  useOfficePresence({
+    source,
+    active: source.mode === "live" && phase === "office",
+    roomId,
+    pose: player,
+    onOccupants: mergePresence,
+    onState: setPresenceState,
+  });
 
   // A room being read is a room whose conversation matters: the one you are
   // standing in, or the one held in frame from the street.
@@ -1293,15 +1139,7 @@ export default function OfficeDemo({
       setEngineError(message);
     },
     onRoomChange: handleRoomChange,
-    onPosition: (x, z, yaw) => {
-      setPlayer({ x, z, yaw });
-      const pose = latestPoseRef.current;
-      if (pose.x === x && pose.z === z && pose.yaw === yaw) return;
-      // The engine reports the pose several times a second even while the
-      // player stands still, so only a real change arms the next publish.
-      latestPoseRef.current = { x, z, yaw };
-      poseDirtyRef.current = true;
-    },
+    onPosition: (x, z, yaw) => setPlayer({ x, z, yaw }),
     onZoeProximity: setNearZoe,
     onFurnitureSelect: (id) => {
       setSelectedFurnitureId(id);
