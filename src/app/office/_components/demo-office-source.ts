@@ -21,6 +21,10 @@ import type {
   OfficeZoeContext,
 } from "~/types/office";
 import type { TowerOffice } from "./engine/tower-scene";
+import {
+  personalOfficeTemplate,
+  withPersonalOfficeDefaults,
+} from "./office-layout";
 
 const KEY_LAYOUTS = "office-demo-layouts-v1";
 const KEY_AVATAR = "office-demo-avatar-v1";
@@ -223,16 +227,25 @@ export const demoSource: OfficeSource = {
     canVisit: true,
   })),
   rooms: ROOMS as unknown as OfficeRoom[],
-  initialLayouts: {},
+  initialLayouts: withPersonalOfficeDefaults(
+    ROOMS as unknown as OfficeRoom[],
+    Object.fromEntries(
+      Object.entries(DEMO_LAYOUTS).map(([roomId, items]) => [
+        roomId,
+        items.map((item) => ({ ...item, roomId })),
+      ])
+    )
+  ),
   initialMessages: {},
   initialAvatar: DEFAULT_AVATAR,
 
   async loadLayouts() {
     const layouts: Record<string, OfficeFurnitureItem[]> = {};
-    for (const room of ROOMS) {
-      layouts[room.id] = (DEMO_LAYOUTS[room.id] ?? []).map(
-        (item: FurnitureItem) => ({ ...item })
-      );
+    for (const [roomId, items] of Object.entries(DEMO_LAYOUTS)) {
+      layouts[roomId] = items.map((item: FurnitureItem) => ({
+        ...item,
+        roomId,
+      }));
     }
 
     try {
@@ -243,14 +256,19 @@ export const demoSource: OfficeSource = {
           OfficeFurnitureItem[]
         >;
         for (const [roomId, items] of Object.entries(parsed)) {
-          if (Array.isArray(items)) layouts[roomId] = items;
+          if (Array.isArray(items)) {
+            layouts[roomId] = items.map((item) => ({ ...item, roomId }));
+          }
         }
       }
     } catch {
       // local storage is best effort in the demo
     }
 
-    return layouts;
+    return withPersonalOfficeDefaults(
+      ROOMS as unknown as OfficeRoom[],
+      layouts
+    );
   },
 
   async saveLayout(roomId, items) {
@@ -264,9 +282,15 @@ export const demoSource: OfficeSource = {
   },
 
   async resetLayout(roomId) {
-    const defaults = (DEMO_LAYOUTS[roomId] ?? []).map(
-      (item: FurnitureItem) => ({ ...item })
+    const room = (ROOMS as unknown as OfficeRoom[]).find(
+      (candidate) => candidate.id === roomId
     );
+    const defaults =
+      DEMO_LAYOUTS[roomId]?.map((item: FurnitureItem) => ({
+        ...item,
+        roomId,
+      })) ??
+      (room && room.kind === "personal" ? personalOfficeTemplate(room) : []);
     await this.saveLayout(roomId, defaults);
     return defaults;
   },

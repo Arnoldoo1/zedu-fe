@@ -14,6 +14,7 @@ import {
   furnitureAabb,
   validatePlacement,
 } from "../office-data";
+import { floorLayoutItems, roomLayoutItems } from "../office-layout";
 import type { OfficeFloor, OfficeOccupant } from "~/types/office";
 import { TowerScene, type TowerOffice } from "./tower-scene";
 import { INK_CSS, PALETTE, PAPER_CSS } from "./palette";
@@ -947,21 +948,12 @@ export class OfficeEngine {
 
   /**
    * Only the furniture of rooms on the floor being shown is drawn: offices on
-   * different member floors share the same coordinates.
+   * different member floors share the same coordinates, so the room id on the
+   * item decides, not the position alone.
    */
   private visibleFurniture(): FurnitureItem[] {
     if (!this.isLive) return this.furnitureItems;
-    return this.furnitureItems.filter((item) => {
-      const room = this.allRooms.find(
-        (candidate) =>
-          (candidate.floorIndex ?? 0) === this.activeFloor &&
-          item.x >= candidate.bounds.x &&
-          item.x <= candidate.bounds.x + candidate.bounds.w &&
-          item.z >= candidate.bounds.z &&
-          item.z <= candidate.bounds.z + candidate.bounds.d
-      );
-      return Boolean(room);
-    });
+    return floorLayoutItems(this.furnitureItems, this.rooms);
   }
 
   private renderFurniture() {
@@ -2118,7 +2110,7 @@ export class OfficeEngine {
           break;
         }
         case "personal": {
-          this.addPrivateOffice(room);
+          this.addWallArt(cx, b.z, Math.min(1.2, b.w * 0.28));
           break;
         }
         case "area": {
@@ -4198,10 +4190,8 @@ export class OfficeEngine {
     if (!hovered || hovered.id !== current.id) {
       return "That spot is outside this room.";
     }
-    const items = this.furnitureItems.filter(
-      (item) =>
-        item.id !== this.editState.movingId &&
-        this.roomAtPosition(item.x, item.z)?.id === current.id
+    const items = roomLayoutItems(this.furnitureItems, current).filter(
+      (item) => item.id !== this.editState.movingId
     );
     return validatePlacement(items, catalogId, x, z, rotation, current);
   }
