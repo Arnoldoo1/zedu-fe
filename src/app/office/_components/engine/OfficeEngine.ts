@@ -4287,8 +4287,25 @@ export class OfficeEngine {
     );
     if (!intersections.length) return;
     const point = intersections[0].point;
-    const targetRoom = this.roomAtPosition(point.x, point.z);
-    if (!targetRoom) {
+    // Corridors need no named room. Reject restricted targets before snapping,
+    // but let findPath snap furniture and wall clicks to nearby free floor.
+    const insideFloor = this.walkBounds.some(
+      (area) =>
+        point.x >= area.minX &&
+        point.x <= area.maxX &&
+        point.z >= area.minZ &&
+        point.z <= area.maxZ
+    );
+    const insideLockedRoom = this.allRooms.some(
+      (room) =>
+        room.locked &&
+        (room.floorIndex ?? 0) === this.activeFloor &&
+        point.x >= room.bounds.x &&
+        point.x <= room.bounds.x + room.bounds.w &&
+        point.z >= room.bounds.z &&
+        point.z <= room.bounds.z + room.bounds.d
+    );
+    if (!insideFloor || insideLockedRoom) {
       this.callbacks.onInvalidTarget();
       return;
     }
