@@ -3462,10 +3462,12 @@ export class OfficeEngine {
       map: texture,
       transparent: true,
       depthWrite: false,
+      depthTest: false,
     });
     const sprite = new THREE.Sprite(material);
     sprite.position.set(0, 2.75, 0);
     sprite.scale.set(2.7, 1.1, 1);
+    sprite.renderOrder = 11;
     rig.group.add(sprite);
     rig.bubble = {
       sprite,
@@ -3520,10 +3522,11 @@ export class OfficeEngine {
       map: texture,
       transparent: true,
       depthWrite: false,
-      depthTest: true,
+      depthTest: false,
     });
     const sprite = new THREE.Sprite(material);
     sprite.scale.set(2.1, 0.59, 1);
+    sprite.renderOrder = 10;
     return sprite;
   }
 
