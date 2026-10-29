@@ -1078,7 +1078,7 @@ export class OfficeEngine {
       this.setActiveFloor(room.floorIndex ?? 0);
     }
     this.playerPosition.set(room.spawn.x, 0, room.spawn.z);
-    this.playerYaw = room.id === "reception" ? Math.PI : Math.PI;
+    this.playerYaw = Math.PI;
     this.path = [];
     this.playerVelocity.set(0, 0);
     this.currentRoom = room;
