@@ -60,6 +60,7 @@ export function RoomDirectory({
   currentRoomId,
   presence,
   playerRoomId,
+  selfId,
   onClose,
   onNavigate,
 }: {
@@ -68,6 +69,7 @@ export function RoomDirectory({
   currentRoomId: string | null;
   presence: PresencePoint[];
   playerRoomId: string | null;
+  selfId: string;
   onClose: () => void;
   onNavigate: (roomId: string) => void;
 }) {
@@ -86,12 +88,13 @@ export function RoomDirectory({
   const occupancy = useMemo(() => {
     const map: Record<string, number> = {};
     for (const agent of presence) {
-      if (agent.roomId === "lobby") continue;
+      // The roster already carries the signed-in person; count them once below.
+      if (agent.roomId === "lobby" || agent.id === selfId) continue;
       map[agent.roomId] = (map[agent.roomId] ?? 0) + 1;
     }
     if (playerRoomId) map[playerRoomId] = (map[playerRoomId] ?? 0) + 1;
     return map;
-  }, [presence, playerRoomId]);
+  }, [presence, playerRoomId, selfId]);
 
   return (
     <div

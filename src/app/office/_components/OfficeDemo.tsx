@@ -412,8 +412,9 @@ export default function OfficeDemo({
     : [];
   const nearbyNames = useMemo(() => {
     if (!roomId) return [];
+    // The live roster includes the signed-in person; they are not nearby you.
     return presence
-      .filter((agent) => agent.roomId === roomId)
+      .filter((agent) => agent.roomId === roomId && agent.id !== selfId)
       .map(
         (agent) =>
           agent.name ??
@@ -421,7 +422,7 @@ export default function OfficeDemo({
           agent.id
       )
       .slice(0, 6);
-  }, [presence, roomId]);
+  }, [presence, roomId, selfId]);
 
   const stateRef = useRef({
     phase,
@@ -1918,6 +1919,7 @@ export default function OfficeDemo({
             currentRoomId={roomId}
             presence={presence}
             playerRoomId={roomId}
+            selfId={selfId}
             onClose={() => setDirectoryOpen(false)}
             onNavigate={navigateToRoom}
           />
